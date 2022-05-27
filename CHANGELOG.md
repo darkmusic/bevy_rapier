@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+### Added
+- `AsyncSceneCollider` component to generate collision for scene meshes similar to `AsyncCollider`.
+
+### Modified
+- `Collider::bevy_mesh`, `Collider::bevy_mesh_convex_decomposition` and `Collider::bevy_mesh_convex_decomposition_with_params` was replaced with single `Collider::from_bevy_mesh` function which accepts `ComputedColliderShape`.
+- `AsyncCollider` now a struct which contains a mesh handle and `ComputedColliderShape`.
+
+
+## 0.13.2 (5 May 2022)
+### Modified
+- The `TimestepMode` and `SimulationToRenderTime` structures are now public.
+
+### Fixed
+- Fixed colors rendered by the debug-renderer.
+- Fix issue where the debug-renderer would sometimes render lines behind the user’s meshes/sprites.
+
+
+## 0.13.1 (1 May 2022)
+### Added
+- Add the `CollidingEntities` components which tracks the set of entities colliding
+  with a given entity.
+- Add constructors `Velocity::linear`, `Velocity::angular`, `Ccd::enabled()`, `Ccd::disabled()`,
+  `Dominance::group`, `Friction::coefficient`, `Restitution::coefficient`, `CollisionGroups::new`,
+  `SolverGroups::new`.
+- Add `RapierContext::collider_parent` that returns the entity containing the parent `RigidBody`
+  of a collider.
+
+### Modified
+- Switched to linear ordering to order our systems.
+- Make the `plugin::systems` module public.
+
+
+## 0.13.0 (30 Apr. 2022)
+This is a **complete rewrite of the plugin** (mostly likely the last large redesign this plugin
+will be subject to). It switches to `rapier` 0.12 and `bevy` 0.7. The focus of this rewrite was
+to significantly improve ergonomics while simplifying the codebase and adding new features.
+
+Refer to [#138](https://github.com/dimforge/bevy_rapier/pull/138) for extensive details
+on this change. See the folders `bevy_rapier2d/examples` and `bevy_rapier3d/examples`
+for some examples.
+
 ## 0.12.0
 ### Modified
 - Switch to `rapier` 0.12.0-alpha.0 and `nalgebra` 0.30.
