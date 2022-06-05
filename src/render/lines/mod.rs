@@ -34,7 +34,7 @@ mod render_dim;
 #[cfg(feature = "dim3")]
 mod dim {
     pub(crate) use super::render_dim::r3d::{queue, DebugLinePipeline, DrawDebugLines};
-    pub(crate) use bevy::core_pipeline::Opaque3d as Phase;
+    pub(crate) use bevy::core_pipeline::core_3d::Opaque3d as Phase;
     use bevy::{asset::Handle, render::mesh::Mesh};
 
     pub(crate) type MeshHandle = Handle<Mesh>;
@@ -50,7 +50,7 @@ mod dim {
 #[cfg(feature = "dim2")]
 mod dim {
     pub(crate) use super::render_dim::r2d::{queue, DebugLinePipeline, DrawDebugLines};
-    pub(crate) use bevy::core_pipeline::Transparent2d as Phase;
+    pub(crate) use bevy::core_pipeline::core_2d::Transparent2d as Phase;
     use bevy::{asset::Handle, render::mesh::Mesh, sprite::Mesh2dHandle};
 
     pub(crate) type MeshHandle = Mesh2dHandle;

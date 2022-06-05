@@ -26,7 +26,7 @@ fn spawn_player(mut commands: Commands, mut rapier_config: ResMut<RapierConfigur
     rapier_config.gravity = Vec2::ZERO;
     commands
         .spawn()
-        .insert_bundle(OrthographicCameraBundle::new_2d());
+        .insert_bundle(Camera2dBundle::default());
 
     let sprite_size = 100.0;
 

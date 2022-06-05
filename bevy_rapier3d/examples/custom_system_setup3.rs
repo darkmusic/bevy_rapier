@@ -119,7 +119,7 @@ fn despawn_one_box(
 }
 
 fn setup_graphics(mut commands: Commands) {
-    commands.spawn_bundle(PerspectiveCameraBundle {
+    commands.spawn_bundle(Camera3dBundle {
         transform: Transform::from_matrix(
             Mat4::look_at_rh(
                 Vec3::new(-30.0, 30.0, 100.0),

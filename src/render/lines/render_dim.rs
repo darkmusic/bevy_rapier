@@ -1,7 +1,7 @@
 #[cfg(feature = "dim3")]
 pub mod r3d {
     use bevy::{
-        core_pipeline::Opaque3d,
+        core_pipeline::core_3d::Opaque3d,
         pbr::{
             DrawMesh, MeshPipeline, MeshPipelineKey, MeshUniform, SetMeshBindGroup,
             SetMeshViewBindGroup,
@@ -178,8 +178,8 @@ pub mod r2d {
     use crate::render::lines::DebugLinesConfig;
     use bevy::{
         asset::Handle,
-        core::FloatOrd,
-        core_pipeline::Transparent2d,
+        utils::FloatOrd,
+        core_pipeline::core_2d::Transparent2d,
         prelude::*,
         render::{
             mesh::MeshVertexBufferLayout,
