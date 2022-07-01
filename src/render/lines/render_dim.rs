@@ -1,7 +1,7 @@
 #[cfg(feature = "dim3")]
 pub mod r3d {
     use bevy::{
-        core_pipeline::Opaque3d,
+        core_pipeline::core_3d::Opaque3d,
         pbr::{
             DrawMesh, MeshPipeline, MeshPipelineKey, MeshUniform, SetMeshBindGroup,
             SetMeshViewBindGroup,
