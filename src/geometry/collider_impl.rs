@@ -1,6 +1,6 @@
 #[cfg(feature = "dim2")]
 use na::DVector;
-#[cfg(feature = "dim3")]
+#[cfg(all(feature = "dim3", feature = "async-collider"))]
 use {
     bevy::prelude::*,
     bevy::render::mesh::{Indices, VertexAttributeValues},
@@ -8,10 +8,10 @@ use {
 
 use rapier::prelude::{FeatureId, Point, Ray, SharedShape, Vector, DIM};
 
-use super::shape_views::*;
-#[cfg(feature = "dim3")]
+use super::{get_snapped_scale, shape_views::*};
+#[cfg(all(feature = "dim3", feature = "async-collider"))]
 use crate::geometry::ComputedColliderShape;
-use crate::geometry::{Collider, PointProjection, RayIntersection, VHACDParameters};
+use crate::geometry::{Collider, PointProjection, RayIntersection, TriMeshFlags, VHACDParameters};
 use crate::math::{Real, Rot, Vect};
 
 impl Collider {
@@ -156,16 +156,28 @@ impl Collider {
         SharedShape::trimesh(vertices, indices).into()
     }
 
+    /// Initializes a collider with a triangle mesh shape defined by its vertex and index buffers, and flags
+    /// controlling its pre-processing.
+    pub fn trimesh_with_flags(
+        vertices: Vec<Vect>,
+        indices: Vec<[u32; 3]>,
+        flags: TriMeshFlags,
+    ) -> Self {
+        let vertices = vertices.into_iter().map(|v| v.into()).collect();
+        SharedShape::trimesh_with_flags(vertices, indices, flags).into()
+    }
+
     /// Initializes a collider with a Bevy Mesh.
     ///
     /// Returns `None` if the index buffer or vertex buffer of the mesh are in an incompatible format.
-    #[cfg(feature = "dim3")]
+    #[cfg(all(feature = "dim3", feature = "async-collider"))]
     pub fn from_bevy_mesh(mesh: &Mesh, collider_shape: &ComputedColliderShape) -> Option<Self> {
         let vertices_indices = extract_mesh_vertices_indices(mesh);
         match collider_shape {
-            ComputedColliderShape::TriMesh => {
-                vertices_indices.map(|(vtx, idx)| SharedShape::trimesh(vtx, idx).into())
-            }
+            ComputedColliderShape::TriMesh => vertices_indices.map(|(vtx, idx)| {
+                SharedShape::trimesh_with_flags(vtx, idx, TriMeshFlags::MERGE_DUPLICATE_VERTICES)
+                    .into()
+            }),
             ComputedColliderShape::ConvexDecomposition(params) => {
                 vertices_indices.map(|(vtx, idx)| {
                     SharedShape::convex_decomposition_with_params(&vtx, &idx, params).into()
@@ -279,26 +291,21 @@ impl Collider {
     /// Initializes a collider with a heightfield shape defined by its set of height and a scale
     /// factor along each coordinate axis.
     #[cfg(feature = "dim2")]
-    pub fn heightfield(heights: Vec<Real>, scale: Vector<Real>) -> Self {
-        SharedShape::heightfield(DVector::from_vec(heights), scale).into()
+    pub fn heightfield(heights: Vec<Real>, scale: Vect) -> Self {
+        SharedShape::heightfield(DVector::from_vec(heights), scale.into()).into()
     }
 
     /// Initializes a collider with a heightfield shape defined by its set of height (in
     /// column-major format) and a scale factor along each coordinate axis.
     #[cfg(feature = "dim3")]
-    pub fn heightfield(
-        heights: Vec<Real>,
-        num_rows: usize,
-        num_cols: usize,
-        scale: Vector<Real>,
-    ) -> Self {
+    pub fn heightfield(heights: Vec<Real>, num_rows: usize, num_cols: usize, scale: Vect) -> Self {
         assert_eq!(
             heights.len(),
             num_rows * num_cols,
             "Invalid number of heights provided."
         );
         let heights = rapier::na::DMatrix::from_vec(num_rows, num_cols, heights);
-        SharedShape::heightfield(heights, scale).into()
+        SharedShape::heightfield(heights, scale.into()).into()
     }
 
     /// Takes a strongly typed reference of this collider.
@@ -512,14 +519,17 @@ impl Collider {
     /// the shape is approximated by a convex polygon/convex polyhedron using
     /// `num_subdivisions` subdivisions.
     pub fn set_scale(&mut self, scale: Vect, num_subdivisions: u32) {
+        let scale = get_snapped_scale(scale);
+
         if scale == self.scale {
             // Nothing to do.
+            return;
         }
 
         if scale == Vect::ONE {
             // Trivial case.
             self.raw = self.unscaled.clone();
-            self.scale = scale;
+            self.scale = Vect::ONE;
             return;
         }
 
@@ -710,7 +720,13 @@ impl Collider {
     }
 }
 
-#[cfg(feature = "dim3")]
+impl Default for Collider {
+    fn default() -> Self {
+        Self::ball(0.5)
+    }
+}
+
+#[cfg(all(feature = "dim3", feature = "async-collider"))]
 #[allow(clippy::type_complexity)]
 fn extract_mesh_vertices_indices(mesh: &Mesh) -> Option<(Vec<na::Point3<Real>>, Vec<[u32; 3]>)> {
     use rapier::na::point;

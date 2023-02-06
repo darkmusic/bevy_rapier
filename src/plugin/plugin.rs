@@ -1,8 +1,9 @@
-use crate::pipeline::{CollisionEvent, PhysicsHooksWithQueryResource};
+use crate::pipeline::{CollisionEvent, ContactForceEvent};
 use crate::plugin::configuration::SimulationToRenderTime;
 use crate::plugin::{systems, RapierConfiguration, RapierContext};
 use crate::prelude::*;
-use bevy::ecs::{event::Events, query::WorldQuery};
+use bevy::ecs::event::Events;
+use bevy::ecs::system::SystemParamItem;
 use bevy::prelude::*;
 use std::marker::PhantomData;
 
@@ -13,13 +14,17 @@ pub type NoUserData = ();
 //
 // This will automatically setup all the resources needed to run a physics simulation with the
 // Rapier physics engine.
-pub struct RapierPhysicsPlugin<PhysicsHooksData = ()> {
+pub struct RapierPhysicsPlugin<PhysicsHooks = ()> {
     physics_scale: f32,
     default_system_setup: bool,
-    _phantom: PhantomData<PhysicsHooksData>,
+    _phantom: PhantomData<PhysicsHooks>,
 }
 
-impl<PhysicsHooksData: 'static + WorldQuery + Send + Sync> RapierPhysicsPlugin<PhysicsHooksData> {
+impl<PhysicsHooks> RapierPhysicsPlugin<PhysicsHooks>
+where
+    PhysicsHooks: 'static + BevyPhysicsHooks,
+    for<'w, 's> SystemParamItem<'w, 's, PhysicsHooks>: BevyPhysicsHooks,
+{
     /// Specifies a scale ratio between the physics world and the bevy transforms.
     ///
     /// This affects the size of every elements in the physics engine, by multiplying
@@ -59,7 +64,11 @@ impl<PhysicsHooksData: 'static + WorldQuery + Send + Sync> RapierPhysicsPlugin<P
         match stage {
             PhysicsStages::SyncBackend => {
                 let systems = SystemSet::new()
-                    .with_system(bevy::transform::transform_propagate_system) // Run Bevy transform propagation additionaly to sync [`GlobalTransform`]
+                    .with_system(systems::update_character_controls) // Run the character controller befor ethe manual transform propagation.
+                    .with_system(
+                        bevy::transform::transform_propagate_system
+                            .after(systems::update_character_controls),
+                    ) // Run Bevy transform propagation additionally to sync [`GlobalTransform`]
                     .with_system(
                         systems::init_async_colliders
                             .after(bevy::transform::transform_propagate_system),
@@ -83,9 +92,16 @@ impl<PhysicsHooksData: 'static + WorldQuery + Send + Sync> RapierPhysicsPlugin<P
                             .after(systems::init_async_colliders),
                     )
                     .with_system(systems::init_joints.after(systems::init_colliders))
-                    .with_system(systems::sync_removals.after(systems::init_joints));
+                    .with_system(
+                        systems::apply_initial_rigid_body_impulses.after(systems::init_colliders),
+                    )
+                    .with_system(
+                        systems::sync_removals
+                            .after(systems::init_joints)
+                            .after(systems::apply_initial_rigid_body_impulses),
+                    );
 
-                #[cfg(feature = "dim3")]
+                #[cfg(all(feature = "dim3", feature = "async-collider"))]
                 {
                     systems.with_system(
                         systems::init_async_scene_colliders.before(systems::init_async_colliders),
@@ -95,10 +111,21 @@ impl<PhysicsHooksData: 'static + WorldQuery + Send + Sync> RapierPhysicsPlugin<P
                 {
                     systems
                 }
+                #[cfg(feature = "headless")]
+                {
+                    systems
+                }
             }
-            PhysicsStages::StepSimulation => {
-                SystemSet::new().with_system(systems::step_simulation::<PhysicsHooksData>)
-            }
+            PhysicsStages::StepSimulation => SystemSet::new()
+                .with_system(systems::step_simulation::<PhysicsHooks>)
+                .with_system(
+                    Events::<CollisionEvent>::update_system
+                        .before(systems::step_simulation::<PhysicsHooks>),
+                )
+                .with_system(
+                    Events::<ContactForceEvent>::update_system
+                        .before(systems::step_simulation::<PhysicsHooks>),
+                ),
             PhysicsStages::Writeback => SystemSet::new()
                 .with_system(systems::update_colliding_entities)
                 .with_system(systems::writeback_rigid_bodies),
@@ -107,7 +134,7 @@ impl<PhysicsHooksData: 'static + WorldQuery + Send + Sync> RapierPhysicsPlugin<P
     }
 }
 
-impl<PhysicsHooksData> Default for RapierPhysicsPlugin<PhysicsHooksData> {
+impl<PhysicsHooksSystemParam> Default for RapierPhysicsPlugin<PhysicsHooksSystemParam> {
     fn default() -> Self {
         Self {
             physics_scale: 1.0,
@@ -141,8 +168,10 @@ pub enum PhysicsStages {
     DetectDespawn,
 }
 
-impl<PhysicsHooksData: 'static + WorldQuery + Send + Sync> Plugin
-    for RapierPhysicsPlugin<PhysicsHooksData>
+impl<PhysicsHooks> Plugin for RapierPhysicsPlugin<PhysicsHooks>
+where
+    PhysicsHooks: 'static + BevyPhysicsHooks,
+    for<'w, 's> SystemParamItem<'w, 's, PhysicsHooks>: BevyPhysicsHooks,
 {
     fn build(&self, app: &mut App) {
         // Register components as reflectable.
@@ -163,7 +192,9 @@ impl<PhysicsHooksData: 'static + WorldQuery + Send + Sync> Plugin
             .register_type::<Friction>()
             .register_type::<Restitution>()
             .register_type::<CollisionGroups>()
-            .register_type::<SolverGroups>();
+            .register_type::<SolverGroups>()
+            .register_type::<ContactForceEventThreshold>()
+            .register_type::<Group>();
 
         // Insert all of our required resources. Don’t overwrite
         // the `RapierConfiguration` if it already exists.
@@ -176,7 +207,8 @@ impl<PhysicsHooksData: 'static + WorldQuery + Send + Sync> Plugin
                 physics_scale: self.physics_scale,
                 ..Default::default()
             })
-            .insert_resource(Events::<CollisionEvent>::default());
+            .insert_resource(Events::<CollisionEvent>::default())
+            .insert_resource(Events::<ContactForceEvent>::default());
 
         // Add each stage as necessary
         if self.default_system_setup {
@@ -206,16 +238,6 @@ impl<PhysicsHooksData: 'static + WorldQuery + Send + Sync> Plugin
                 SystemStage::parallel()
                     .with_system_set(Self::get_systems(PhysicsStages::DetectDespawn)),
             );
-        }
-
-        if app
-            .world
-            .get_resource::<PhysicsHooksWithQueryResource<PhysicsHooksData>>()
-            .is_none()
-        {
-            app.insert_resource(PhysicsHooksWithQueryResource::<PhysicsHooksData>(Box::new(
-                (),
-            )));
         }
     }
 }

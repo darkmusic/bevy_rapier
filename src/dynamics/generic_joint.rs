@@ -4,6 +4,7 @@ use rapier::dynamics::{
     GenericJoint as RapierGenericJoint, JointAxesMask, JointAxis, JointLimits, JointMotor,
     MotorModel,
 };
+use rapier::math::DIM;
 
 #[cfg(feature = "dim3")]
 use crate::dynamics::SphericalJoint;
@@ -23,12 +24,14 @@ impl GenericJoint {
         self.raw.local_frame1.translation.vector /= physics_scale;
         self.raw.local_frame2.translation.vector /= physics_scale;
 
-        for limit in &mut self.raw.limits {
+        // NOTE: we don’t apply the physics scale to angular limits.
+        for limit in &mut self.raw.limits[0..DIM] {
             limit.min /= physics_scale;
             limit.max /= physics_scale;
         }
 
-        for motor in &mut self.raw.motors {
+        // NOTE: we don’t apply the physics scale to angular motors.
+        for motor in &mut self.raw.motors[0..DIM] {
             motor.target_vel /= physics_scale;
             motor.target_pos /= physics_scale;
         }
@@ -151,6 +154,17 @@ impl GenericJoint {
     /// Sets anchor of this joint, expressed in the second rigid-body’s local-space.
     pub fn set_local_anchor2(&mut self, anchor2: Vect) -> &mut Self {
         self.raw.set_local_anchor2(anchor2.into());
+        self
+    }
+
+    /// Are contacts between the attached rigid-bodies enabled?
+    pub fn contacts_enabled(&self) -> bool {
+        self.raw.contacts_enabled
+    }
+
+    /// Sets whether contacts between the attached rigid-bodies are enabled.
+    pub fn set_contacts_enabled(&mut self, enabled: bool) -> &mut Self {
+        self.raw.set_contacts_enabled(enabled);
         self
     }
 

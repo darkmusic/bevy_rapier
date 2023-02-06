@@ -1,4 +1,5 @@
 use crate::plugin::RapierContext;
+use crate::render::lines::DebugLinesConfig;
 use bevy::prelude::*;
 use lines::DebugLines;
 use rapier::math::{Point, Real};
@@ -20,10 +21,12 @@ pub struct ColliderDebugColor(pub Color);
 /// its physics simulation. This is typically useful to check proper
 /// alignment between colliders and your own visual assets.
 pub struct RapierDebugRenderPlugin {
-    /// If set to `false`, depth-testing will be disabled when rendering,
+    /// If set to `true`, depth-testing will be disabled when rendering,
     /// meaning that the debug-render lines will always appear on top
     /// of (won’t be occluded by) your own visual assets.
-    pub depth_test: bool,
+    pub always_on_top: bool,
+    /// Is the debug-rendering enabled?
+    pub enabled: bool,
     /// Control some aspects of the render coloring.
     pub style: DebugRenderStyle,
     /// Flags to select what part of physics scene is rendered (by default
@@ -31,35 +34,55 @@ pub struct RapierDebugRenderPlugin {
     pub mode: DebugRenderMode,
 }
 
+#[allow(clippy::derivable_impls)] // The 3D impl can be derived, but not the 2D impl.
 impl Default for RapierDebugRenderPlugin {
     #[cfg(feature = "dim2")]
     fn default() -> Self {
         Self {
-            depth_test: cfg!(feature = "dim3"),
+            enabled: true,
+            always_on_top: true,
             style: DebugRenderStyle {
                 rigid_body_axes_length: 20.0,
                 ..Default::default()
             },
-            mode: DebugRenderMode::all(),
+            mode: DebugRenderMode::default(),
         }
     }
     #[cfg(feature = "dim3")]
     fn default() -> Self {
         Self {
-            depth_test: cfg!(feature = "dim3"),
+            enabled: true,
+            always_on_top: false,
             style: DebugRenderStyle::default(),
-            mode: DebugRenderMode::all(),
+            mode: DebugRenderMode::default(),
         }
     }
 }
 
+impl RapierDebugRenderPlugin {
+    /// Initialize the render plugin such that its lines are always rendered on top of other objects.
+    pub fn always_on_top(mut self) -> Self {
+        self.always_on_top = true;
+        self
+    }
+
+    /// Initialize the render plugin such that it is initially disabled.
+    pub fn disabled(mut self) -> Self {
+        self.enabled = false;
+        self
+    }
+}
+
 /// Context to control some aspect of the debug-renderer after initialization.
+#[derive(Resource)]
 pub struct DebugRenderContext {
     /// Is the debug-rendering currently enabled?
     pub enabled: bool,
     /// Pipeline responsible for rendering. Access `pipeline.mode` and `pipeline.style`
     /// to modify the set of rendered elements, and modify the default coloring rules.
     pub pipeline: DebugRenderPipeline,
+    /// Are the debug-lines always rendered on top of other primitives?
+    pub always_on_top: bool,
 }
 
 impl Default for DebugRenderContext {
@@ -67,16 +90,18 @@ impl Default for DebugRenderContext {
         Self {
             enabled: true,
             pipeline: DebugRenderPipeline::default(),
+            always_on_top: true,
         }
     }
 }
 
 impl Plugin for RapierDebugRenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugin(lines::DebugLinesPlugin::with_depth_test(self.depth_test))
+        app.add_plugin(lines::DebugLinesPlugin::always_on_top(self.always_on_top))
             .insert_resource(DebugRenderContext {
-                enabled: true,
+                enabled: self.enabled,
                 pipeline: DebugRenderPipeline::new(self.style, self.mode),
+                always_on_top: self.always_on_top,
             })
             .add_system_to_stage(
                 CoreStage::PostUpdate,
@@ -151,6 +176,7 @@ impl<'world, 'state, 'a, 'b, 'c> DebugRenderBackend
 fn debug_render_scene(
     rapier_context: Res<RapierContext>,
     mut render_context: ResMut<DebugRenderContext>,
+    lines_config: ResMut<DebugLinesConfig>,
     mut lines: ResMut<DebugLines>,
     custom_colors: Query<&ColliderDebugColor>,
 ) {
@@ -158,11 +184,12 @@ fn debug_render_scene(
         return;
     }
 
+    *lines_config.always_on_top.write().unwrap() = render_context.always_on_top;
     let mut backend = BevyLinesRenderBackend {
         physics_scale: rapier_context.physics_scale,
         custom_colors,
-        context: &*rapier_context,
-        lines: &mut *lines,
+        context: &rapier_context,
+        lines: &mut lines,
     };
 
     let unscaled_style = render_context.pipeline.style;

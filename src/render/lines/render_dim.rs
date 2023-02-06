@@ -1,4 +1,4 @@
-#[cfg(feature = "dim3")]
+#[cfg(feature = "debug-render-3d")]
 pub mod r3d {
     use bevy::{
         core_pipeline::core_3d::Opaque3d,
@@ -19,12 +19,13 @@ pub mod r3d {
                 StencilFaceState, StencilState, TextureFormat, VertexState,
             },
             texture::BevyDefault,
-            view::{ExtractedView, Msaa},
+            view::{ExtractedView, Msaa, ViewTarget},
         },
     };
 
     use super::super::{DebugLinesConfig, RenderDebugLinesMesh, DEBUG_LINES_SHADER_HANDLE};
 
+    #[derive(Resource)]
     pub(crate) struct DebugLinePipeline {
         mesh_pipeline: MeshPipeline,
         shader: Handle<Shader>,
@@ -72,6 +73,12 @@ pub mod r3d {
                 depth_write_enabled = true;
             }
 
+            let format = if key.contains(MeshPipelineKey::HDR) {
+                ViewTarget::TEXTURE_FORMAT_HDR
+            } else {
+                TextureFormat::bevy_default()
+            };
+
             Ok(RenderPipelineDescriptor {
                 vertex: VertexState {
                     shader: self.shader.clone_weak(),
@@ -83,11 +90,11 @@ pub mod r3d {
                     shader: self.shader.clone_weak(),
                     shader_defs,
                     entry_point: "fragment".into(),
-                    targets: vec![ColorTargetState {
-                        format: TextureFormat::bevy_default(),
+                    targets: vec![Some(ColorTargetState {
+                        format,
                         blend,
                         write_mask: ColorWrites::ALL,
-                    }],
+                    })],
                 }),
                 layout: Some(vec![self.mesh_pipeline.view_layout.clone()]),
                 primitive: PrimitiveState {
@@ -136,21 +143,28 @@ pub mod r3d {
         config: Res<DebugLinesConfig>,
         mut views: Query<(&ExtractedView, &mut RenderPhase<Opaque3d>)>,
     ) {
+        let always_on_top = *config.always_on_top.read().unwrap();
         let draw_custom = opaque_3d_draw_functions
             .read()
             .get_id::<DrawDebugLines>()
             .unwrap();
-        let key = MeshPipelineKey::from_msaa_samples(msaa.samples);
+        let msaa_key = MeshPipelineKey::from_msaa_samples(msaa.samples);
         for (view, mut transparent_phase) in views.iter_mut() {
             let view_matrix = view.transform.compute_matrix();
             let view_row_2 = view_matrix.row(2);
+
+            let view_key = msaa_key | MeshPipelineKey::from_hdr(view.hdr);
+
             for (entity, mesh_uniform, mesh_handle) in material_meshes.iter() {
                 if let Some(mesh) = render_meshes.get(mesh_handle) {
+                    let key = view_key
+                        | MeshPipelineKey::from_primitive_topology(mesh.primitive_topology);
+
                     let pipeline = pipelines
                         .specialize(
                             &mut pipeline_cache,
                             &debug_line_pipeline,
-                            (config.depth_test, key),
+                            (!always_on_top, key),
                             &mesh.layout,
                         )
                         .unwrap();
@@ -173,13 +187,12 @@ pub mod r3d {
     );
 }
 
-#[cfg(feature = "dim2")]
+#[cfg(feature = "debug-render-2d")]
 pub mod r2d {
     use crate::render::lines::DebugLinesConfig;
     use bevy::{
         asset::Handle,
-        core::FloatOrd,
-        core_pipeline::Transparent2d,
+        core_pipeline::core_2d::Transparent2d,
         prelude::*,
         render::{
             mesh::MeshVertexBufferLayout,
@@ -192,16 +205,18 @@ pub mod r2d {
                 SpecializedMeshPipelineError, SpecializedMeshPipelines, TextureFormat, VertexState,
             },
             texture::BevyDefault,
-            view::{Msaa, VisibleEntities},
+            view::{ExtractedView, Msaa, ViewTarget, VisibleEntities},
         },
         sprite::{
             DrawMesh2d, Mesh2dHandle, Mesh2dPipeline, Mesh2dPipelineKey, Mesh2dUniform,
             SetMesh2dBindGroup, SetMesh2dViewBindGroup,
         },
+        utils::FloatOrd,
     };
 
     use super::super::{RenderDebugLinesMesh, DEBUG_LINES_SHADER_HANDLE};
 
+    #[derive(Resource)]
     pub(crate) struct DebugLinePipeline {
         mesh_pipeline: Mesh2dPipeline,
         shader: Handle<Shader>,
@@ -231,6 +246,12 @@ pub mod r2d {
                 Mesh::ATTRIBUTE_COLOR.at_shader_location(1),
             ])?;
 
+            let format = if key.contains(Mesh2dPipelineKey::HDR) {
+                ViewTarget::TEXTURE_FORMAT_HDR
+            } else {
+                TextureFormat::bevy_default()
+            };
+
             Ok(RenderPipelineDescriptor {
                 vertex: VertexState {
                     shader: self.shader.clone_weak(),
@@ -242,11 +263,11 @@ pub mod r2d {
                     shader: self.shader.clone_weak(),
                     shader_defs: vec![],
                     entry_point: "fragment".into(),
-                    targets: vec![ColorTargetState {
-                        format: TextureFormat::bevy_default(),
+                    targets: vec![Some(ColorTargetState {
+                        format,
                         blend: Some(BlendState::ALPHA_BLENDING),
                         write_mask: ColorWrites::ALL,
-                    }],
+                    })],
                 }),
                 layout: Some(vec![self.mesh_pipeline.view_layout.clone()]),
                 primitive: PrimitiveState {
@@ -278,23 +299,30 @@ pub mod r2d {
         render_meshes: Res<RenderAssets<Mesh>>,
         msaa: Res<Msaa>,
         material_meshes: Query<(&Mesh2dUniform, &Mesh2dHandle), With<RenderDebugLinesMesh>>,
-        mut views: Query<(&VisibleEntities, &mut RenderPhase<Transparent2d>)>,
+        mut views: Query<(
+            &VisibleEntities,
+            &mut RenderPhase<Transparent2d>,
+            &ExtractedView,
+        )>,
     ) {
-        for (view, mut phase) in views.iter_mut() {
+        let always_on_top = *config.always_on_top.read().unwrap();
+        for (visible_entities, mut phase, view) in views.iter_mut() {
             let draw_mesh2d = draw2d_functions.read().get_id::<DrawDebugLines>().unwrap();
             let msaa_key = Mesh2dPipelineKey::from_msaa_samples(msaa.samples);
 
-            for visible_entity in &view.entities {
+            for visible_entity in &visible_entities.entities {
                 if let Ok((uniform, mesh_handle)) = material_meshes.get(*visible_entity) {
                     if let Some(mesh) = render_meshes.get(&mesh_handle.0) {
                         let mesh_key = msaa_key
                             | Mesh2dPipelineKey::from_primitive_topology(
                                 PrimitiveTopology::LineList,
-                            );
-                        let mesh_z = if config.depth_test {
-                            uniform.transform.w_axis.z
-                        } else {
+                            )
+                            | Mesh2dPipelineKey::from_hdr(view.hdr);
+
+                        let mesh_z = if always_on_top {
                             f32::MAX
+                        } else {
+                            uniform.transform.w_axis.z
                         };
                         let pipeline = specialized_pipelines
                             .specialize(

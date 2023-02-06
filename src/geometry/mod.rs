@@ -1,6 +1,5 @@
 pub use self::collider::*;
 pub use self::shape_views::ColliderView;
-pub use rapier::geometry::InteractionGroups;
 pub use rapier::geometry::SolverFlags;
 pub use rapier::parry::query::TOIStatus;
 pub use rapier::parry::shape::TriMeshFlags;
@@ -79,7 +78,7 @@ impl RayIntersection {
 }
 
 /// The result of a time-of-impact (TOI) computation.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Toi {
     /// The time at which the objects touch.
     pub toi: Real,

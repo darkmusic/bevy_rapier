@@ -8,7 +8,6 @@ fn main() {
             0xF9 as f32 / 255.0,
             0xFF as f32 / 255.0,
         )))
-        .insert_resource(Msaa::default())
         .add_plugins(DefaultPlugins)
         .add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugin(RapierDebugRenderPlugin::default())
@@ -19,15 +18,9 @@ fn main() {
 }
 
 fn setup_graphics(mut commands: Commands) {
-    commands.spawn_bundle(PerspectiveCameraBundle {
-        transform: Transform::from_matrix(
-            Mat4::look_at_rh(
-                Vec3::new(-30.0, 30.0, 100.0),
-                Vec3::new(0.0, 10.0, 0.0),
-                Vec3::new(0.0, 1.0, 0.0),
-            )
-            .inverse(),
-        ),
+    commands.spawn(Camera3dBundle {
+        transform: Transform::from_xyz(-30.0, 30.0, 100.0)
+            .looking_at(Vec3::new(0.0, 10.0, 0.0), Vec3::Y),
         ..Default::default()
     });
 }
@@ -39,13 +32,10 @@ pub fn setup_physics(mut commands: Commands) {
     let ground_size = 200.1;
     let ground_height = 0.1;
 
-    commands
-        .spawn_bundle(TransformBundle::from(Transform::from_xyz(
-            0.0,
-            -ground_height,
-            0.0,
-        )))
-        .insert(Collider::cuboid(ground_size, ground_height, ground_size));
+    commands.spawn((
+        TransformBundle::from(Transform::from_xyz(0.0, -ground_height, 0.0)),
+        Collider::cuboid(ground_size, ground_height, ground_size),
+    ));
 
     /*
      * Create the cubes
@@ -68,10 +58,11 @@ pub fn setup_physics(mut commands: Commands) {
                 let z = k as f32 * shift - centerz + offset;
 
                 // Build the rigid body.
-                commands
-                    .spawn_bundle(TransformBundle::from(Transform::from_xyz(x, y, z)))
-                    .insert(RigidBody::Dynamic)
-                    .insert(Collider::cuboid(rad, rad, rad));
+                commands.spawn((
+                    TransformBundle::from(Transform::from_xyz(x, y, z)),
+                    RigidBody::Dynamic,
+                    Collider::cuboid(rad, rad, rad),
+                ));
             }
         }
 
@@ -83,7 +74,6 @@ fn cast_ray(
     mut commands: Commands,
     windows: Res<Windows>,
     rapier_context: Res<RapierContext>,
-    bodies: Query<&RigidBody>,
     cameras: Query<(&Camera, &GlobalTransform)>,
 ) {
     // We will color in read the colliders hovered by the mouse.
@@ -98,19 +88,15 @@ fn cast_ray(
             ray_dir,
             f32::MAX,
             true,
-            InteractionGroups::default(),
-            None,
+            QueryFilter::only_dynamic(),
         );
 
         if let Some((entity, _toi)) = hit {
-            // Color in red the entity we just hit.
-            // But don't color it if the rigid-body is not dynamic.
-            if let Ok(rb) = bodies.get(entity) {
-                if *rb == RigidBody::Dynamic {
-                    let color = Color::BLUE; // Color in blue.
-                    commands.entity(entity).insert(ColliderDebugColor(color));
-                }
-            }
+            // Color in blue the entity we just hit.
+            // Because of the query filter, only colliders attached to a dynamic body
+            // will get an event.
+            let color = Color::BLUE;
+            commands.entity(entity).insert(ColliderDebugColor(color));
         }
     }
 }
@@ -127,7 +113,7 @@ fn ray_from_mouse_position(
     let y = 2.0 * (mouse_position.y / window.height() as f32) - 1.0;
 
     let camera_inverse_matrix =
-        camera_transform.compute_matrix() * camera.projection_matrix.inverse();
+        camera_transform.compute_matrix() * camera.projection_matrix().inverse();
     let near = camera_inverse_matrix * Vec3::new(x, y, -1.0).extend(1.0);
     let far = camera_inverse_matrix * Vec3::new(x, y, 1.0).extend(1.0);
 

@@ -1,10 +1,13 @@
-#[cfg(feature = "dim3")]
-use crate::geometry::VHACDParameters;
+use std::fmt;
+
+#[cfg(all(feature = "dim3", feature = "async-collider"))]
+use {crate::geometry::VHACDParameters, bevy::utils::HashMap};
+
 use bevy::prelude::*;
 use bevy::reflect::FromReflect;
-#[cfg(feature = "dim3")]
-use bevy::utils::HashMap;
+
 use bevy::utils::HashSet;
+use rapier::geometry::Shape;
 use rapier::prelude::{ColliderHandle, InteractionGroups, SharedShape};
 
 use crate::dynamics::{CoefficientCombineRule, MassProperties};
@@ -15,21 +18,14 @@ use crate::math::Vect;
 pub struct RapierColliderHandle(pub ColliderHandle);
 
 /// A component which will be replaced by the specified collider type after the referenced mesh become available.
-#[cfg(feature = "dim3")]
-#[derive(Component, Debug, Clone)]
-pub struct AsyncCollider {
-    /// Mesh handle to use for collider generation.
-    pub handle: Handle<Mesh>,
-    /// Collider type that will be generated.
-    pub shape: ComputedColliderShape,
-}
+#[cfg(all(feature = "dim3", feature = "async-collider"))]
+#[derive(Component, Debug, Clone, Default)]
+pub struct AsyncCollider(pub ComputedColliderShape);
 
 /// A component which will be replaced the specified collider types on children with meshes after the referenced scene become available.
-#[cfg(feature = "dim3")]
+#[cfg(all(feature = "dim3", feature = "async-collider"))]
 #[derive(Component, Debug, Clone)]
 pub struct AsyncSceneCollider {
-    /// Scene handle to use for colliders generation.
-    pub handle: Handle<Scene>,
     /// Collider type for each scene mesh not included in [`named_shapes`]. If [`None`], then all
     /// shapes will be skipped for processing except [`named_shapes`].
     pub shape: Option<ComputedColliderShape>,
@@ -38,11 +34,22 @@ pub struct AsyncSceneCollider {
     pub named_shapes: HashMap<String, Option<ComputedColliderShape>>,
 }
 
+#[cfg(all(feature = "dim3", feature = "async-collider"))]
+impl Default for AsyncSceneCollider {
+    fn default() -> Self {
+        Self {
+            shape: Some(ComputedColliderShape::TriMesh),
+            named_shapes: Default::default(),
+        }
+    }
+}
+
 /// Shape type based on a Bevy mesh asset.
-#[cfg(feature = "dim3")]
-#[derive(Debug, Clone)]
+#[cfg(all(feature = "dim3", feature = "async-collider"))]
+#[derive(Debug, Clone, Default)]
 pub enum ComputedColliderShape {
     /// Triangle-mesh.
+    #[default]
     TriMesh,
     /// Convex decomposition.
     ConvexDecomposition(VHACDParameters),
@@ -51,6 +58,7 @@ pub enum ComputedColliderShape {
 /// A geometric entity that can be attached to a body so it can be affected by contacts
 /// and intersection queries.
 #[derive(Component, Clone)] // TODO: Reflect
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 pub struct Collider {
     /// The raw shape from Rapier.
     pub raw: SharedShape,
@@ -68,6 +76,18 @@ impl From<SharedShape> for Collider {
     }
 }
 
+impl<'a> From<&'a Collider> for &'a dyn Shape {
+    fn from(collider: &'a Collider) -> &'a dyn Shape {
+        &*collider.raw
+    }
+}
+
+impl fmt::Debug for Collider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_typed_shape().fmt(f)
+    }
+}
+
 /// Overwrites the default application of [`GlobalTransform::scale`] to collider shapes.
 #[derive(Copy, Clone, Debug, PartialEq, Component, Reflect, FromReflect)]
 pub enum ColliderScale {
@@ -79,9 +99,9 @@ pub enum ColliderScale {
 }
 
 /// Indicates whether or not the collider is a sensor.
-#[derive(Copy, Clone, Debug, PartialEq, Default, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Component, Reflect, FromReflect)]
 #[reflect(Component, PartialEq)]
-pub struct Sensor(pub bool);
+pub struct Sensor;
 
 /// Custom mass-properties of a collider.
 #[derive(Copy, Clone, Debug, PartialEq, Component, Reflect, FromReflect)]
@@ -89,6 +109,8 @@ pub struct Sensor(pub bool);
 pub enum ColliderMassProperties {
     /// The mass-properties are computed automatically from the collider’s shape and this density.
     Density(f32),
+    /// The mass-properties are computed automatically from the collider’s shape and this mass.
+    Mass(f32),
     /// The mass-properties of the collider are replaced by the ones specified here.
     MassProperties(MassProperties),
 }
@@ -227,6 +249,90 @@ impl From<ActiveCollisionTypes> for rapier::geometry::ActiveCollisionTypes {
     }
 }
 
+bitflags::bitflags! {
+    /// A bit mask identifying groups for interaction.
+    #[derive(Component, Reflect, FromReflect)]
+    #[reflect(Component, Hash, PartialEq)]
+    #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
+    pub struct Group: u32 {
+        /// The group n°1.
+        const GROUP_1 = 1 << 0;
+        /// The group n°2.
+        const GROUP_2 = 1 << 1;
+        /// The group n°3.
+        const GROUP_3 = 1 << 2;
+        /// The group n°4.
+        const GROUP_4 = 1 << 3;
+        /// The group n°5.
+        const GROUP_5 = 1 << 4;
+        /// The group n°6.
+        const GROUP_6 = 1 << 5;
+        /// The group n°7.
+        const GROUP_7 = 1 << 6;
+        /// The group n°8.
+        const GROUP_8 = 1 << 7;
+        /// The group n°9.
+        const GROUP_9 = 1 << 8;
+        /// The group n°10.
+        const GROUP_10 = 1 << 9;
+        /// The group n°11.
+        const GROUP_11 = 1 << 10;
+        /// The group n°12.
+        const GROUP_12 = 1 << 11;
+        /// The group n°13.
+        const GROUP_13 = 1 << 12;
+        /// The group n°14.
+        const GROUP_14 = 1 << 13;
+        /// The group n°15.
+        const GROUP_15 = 1 << 14;
+        /// The group n°16.
+        const GROUP_16 = 1 << 15;
+        /// The group n°17.
+        const GROUP_17 = 1 << 16;
+        /// The group n°18.
+        const GROUP_18 = 1 << 17;
+        /// The group n°19.
+        const GROUP_19 = 1 << 18;
+        /// The group n°20.
+        const GROUP_20 = 1 << 19;
+        /// The group n°21.
+        const GROUP_21 = 1 << 20;
+        /// The group n°22.
+        const GROUP_22 = 1 << 21;
+        /// The group n°23.
+        const GROUP_23 = 1 << 22;
+        /// The group n°24.
+        const GROUP_24 = 1 << 23;
+        /// The group n°25.
+        const GROUP_25 = 1 << 24;
+        /// The group n°26.
+        const GROUP_26 = 1 << 25;
+        /// The group n°27.
+        const GROUP_27 = 1 << 26;
+        /// The group n°28.
+        const GROUP_28 = 1 << 27;
+        /// The group n°29.
+        const GROUP_29 = 1 << 28;
+        /// The group n°30.
+        const GROUP_30 = 1 << 29;
+        /// The group n°31.
+        const GROUP_31 = 1 << 30;
+        /// The group n°32.
+        const GROUP_32 = 1 << 31;
+
+        /// All of the groups.
+        const ALL = u32::MAX;
+        /// None of the groups.
+        const NONE = 0;
+    }
+}
+
+impl Default for Group {
+    fn default() -> Self {
+        Group::ALL
+    }
+}
+
 /// Pairwise collision filtering using bit masks.
 ///
 /// This filtering method is based on two 32-bit values:
@@ -242,27 +348,18 @@ impl From<ActiveCollisionTypes> for rapier::geometry::ActiveCollisionTypes {
 /// ```ignore
 /// (self.memberships & rhs.filter) != 0 && (rhs.memberships & self.filter) != 0
 /// ```
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Component, Reflect, FromReflect)]
 #[reflect(Component, Hash, PartialEq)]
 pub struct CollisionGroups {
     /// Groups memberships.
-    pub memberships: u32,
+    pub memberships: Group,
     /// Groups filter.
-    pub filters: u32,
-}
-
-impl Default for CollisionGroups {
-    fn default() -> Self {
-        Self {
-            memberships: u32::MAX,
-            filters: u32::MAX,
-        }
-    }
+    pub filters: Group,
 }
 
 impl CollisionGroups {
     /// Creates a new collision-groups with the given membership masks and filter masks.
-    pub const fn new(memberships: u32, filters: u32) -> Self {
+    pub const fn new(memberships: Group, filters: Group) -> Self {
         Self {
             memberships,
             filters,
@@ -273,8 +370,9 @@ impl CollisionGroups {
 impl From<CollisionGroups> for InteractionGroups {
     fn from(collision_groups: CollisionGroups) -> InteractionGroups {
         InteractionGroups {
-            memberships: collision_groups.memberships,
-            filter: collision_groups.filters,
+            memberships: rapier::geometry::Group::from_bits(collision_groups.memberships.bits())
+                .unwrap(),
+            filter: rapier::geometry::Group::from_bits(collision_groups.filters.bits()).unwrap(),
         }
     }
 }
@@ -282,27 +380,18 @@ impl From<CollisionGroups> for InteractionGroups {
 /// Pairwise constraints resolution filtering using bit masks.
 ///
 /// This follows the same rules as the `CollisionGroups`.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Component, Reflect, FromReflect)]
 #[reflect(Component, Hash, PartialEq)]
 pub struct SolverGroups {
     /// Groups memberships.
-    pub memberships: u32,
+    pub memberships: Group,
     /// Groups filter.
-    pub filters: u32,
-}
-
-impl Default for SolverGroups {
-    fn default() -> Self {
-        Self {
-            memberships: u32::MAX,
-            filters: u32::MAX,
-        }
-    }
+    pub filters: Group,
 }
 
 impl SolverGroups {
     /// Creates a new collision-groups with the given membership masks and filter masks.
-    pub const fn new(memberships: u32, filters: u32) -> Self {
+    pub const fn new(memberships: Group, filters: Group) -> Self {
         Self {
             memberships,
             filters,
@@ -313,8 +402,9 @@ impl SolverGroups {
 impl From<SolverGroups> for InteractionGroups {
     fn from(solver_groups: SolverGroups) -> InteractionGroups {
         InteractionGroups {
-            memberships: solver_groups.memberships,
-            filter: solver_groups.filters,
+            memberships: rapier::geometry::Group::from_bits(solver_groups.memberships.bits())
+                .unwrap(),
+            filter: rapier::geometry::Group::from_bits(solver_groups.filters.bits()).unwrap(),
         }
     }
 }
@@ -347,9 +437,12 @@ bitflags::bitflags! {
     #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
     /// Flags affecting the events generated for this collider.
     pub struct ActiveEvents: u32 {
-        /// If set, Rapier will call `EventHandler::handle_intersection_event` and
-        /// `EventHandler::handle_contact_event` whenever relevant for this collider.
+        /// If set, Rapier will call `EventHandler::handle_collision_event`
+        /// whenever relevant for this collider.
         const COLLISION_EVENTS = 0b0001;
+        /// If set, Rapier will call `EventHandler::handle_contact_force_event`
+        /// whenever relevant for this collider.
+        const CONTACT_FORCE_EVENTS = 0b0010;
     }
 }
 
@@ -360,7 +453,19 @@ impl From<ActiveEvents> for rapier::pipeline::ActiveEvents {
     }
 }
 
-/// Component which will be filled (if present) with a list of entities with which the current entity is currently in contact.
+/// The total force magnitude beyond which a contact force event can be emitted.
+#[derive(Copy, Clone, PartialEq, Component, Reflect, FromReflect)]
+#[reflect(Component)]
+pub struct ContactForceEventThreshold(pub f32);
+
+impl Default for ContactForceEventThreshold {
+    fn default() -> Self {
+        Self(f32::MAX)
+    }
+}
+
+/// Component which will be filled (if present) with a list of entities with which the current
+/// entity is currently in contact.
 #[derive(Component, Default, Reflect, FromReflect)]
 #[reflect(Component)]
 pub struct CollidingEntities(pub(crate) HashSet<Entity>);
@@ -387,5 +492,26 @@ impl CollidingEntities {
     /// An iterator visiting all colliding entities in arbitrary order.
     pub fn iter(&self) -> impl Iterator<Item = Entity> + '_ {
         self.0.iter().copied()
+    }
+}
+
+/// Indicates whether or not the collider is disabled explicitly by the user.
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Component, Reflect, FromReflect)]
+#[reflect(Component, PartialEq)]
+pub struct ColliderDisabled;
+
+/// We restrict the scaling increment to 1.0e-4, to avoid numerical jitter
+/// due to the extraction of scaling factor from the GlobalTransform matrix.
+pub fn get_snapped_scale(scale: Vect) -> Vect {
+    fn snap_value(new: f32) -> f32 {
+        const PRECISION: f32 = 1.0e4;
+        (new * PRECISION).round() / PRECISION
+    }
+
+    Vect {
+        x: snap_value(scale.x),
+        y: snap_value(scale.y),
+        #[cfg(feature = "dim3")]
+        z: snap_value(scale.z),
     }
 }

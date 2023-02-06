@@ -1,4 +1,5 @@
 #![allow(warnings)]
+
 /**
  *
  * NOTE: this module and its submodules are only temporary. It is a copy-paste of the bevy-debug-lines
@@ -15,7 +16,6 @@
  */
 use bevy::{
     asset::{Assets, HandleUntyped},
-    pbr::{NotShadowCaster, NotShadowReceiver},
     prelude::*,
     reflect::TypeUuid,
     render::{
@@ -24,54 +24,42 @@ use bevy::{
         render_resource::PrimitiveTopology,
         render_resource::Shader,
         view::NoFrustumCulling,
+        Extract,
     },
 };
+use std::sync::{Arc, RwLock};
 
 mod render_dim;
 
 // This module exists to "isolate" the `#[cfg]` attributes to this part of the
 // code. Otherwise, we would pollute the code with a lot of feature
 // gates-specific code.
-#[cfg(feature = "dim3")]
-mod dim {
+#[cfg(feature = "debug-render-3d")]
+mod dim3 {
     pub(crate) use super::render_dim::r3d::{queue, DebugLinePipeline, DrawDebugLines};
     pub(crate) use bevy::core_pipeline::core_3d::Opaque3d as Phase;
-    use bevy::{asset::Handle, render::mesh::Mesh};
-
-    pub(crate) type MeshHandle = Handle<Mesh>;
-    pub(crate) fn from_handle(from: &MeshHandle) -> &Handle<Mesh> {
-        from
-    }
-    pub(crate) fn into_handle(from: Handle<Mesh>) -> MeshHandle {
-        from
-    }
-    pub(crate) const SHADER_FILE: &str = include_str!("debuglines.wgsl");
-    pub(crate) const DIMMENSION: &str = "3d";
 }
-#[cfg(feature = "dim2")]
-mod dim {
+#[cfg(feature = "debug-render-2d")]
+mod dim2 {
     pub(crate) use super::render_dim::r2d::{queue, DebugLinePipeline, DrawDebugLines};
-    pub(crate) use bevy::core_pipeline::Transparent2d as Phase;
-    use bevy::{asset::Handle, render::mesh::Mesh, sprite::Mesh2dHandle};
-
-    pub(crate) type MeshHandle = Mesh2dHandle;
-    pub(crate) fn from_handle(from: &MeshHandle) -> &Handle<Mesh> {
-        &from.0
-    }
-    pub(crate) fn into_handle(from: Handle<Mesh>) -> MeshHandle {
-        Mesh2dHandle(from)
-    }
-    pub(crate) const SHADER_FILE: &str = include_str!("debuglines2d.wgsl");
-    pub(crate) const DIMMENSION: &str = "2d";
+    pub(crate) use bevy::core_pipeline::core_2d::Transparent2d as Phase;
 }
 
-// See debuglines.wgsl for explanation on 2 shaders.
-//pub(crate) const SHADER_FILE: &str = include_str!("debuglines.wgsl");
+pub(crate) const SHADER_FILE: &str = include_str!("debuglines.wgsl");
 pub(crate) const DEBUG_LINES_SHADER_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 17477439189930443325);
 
+#[derive(Resource, Clone)]
 pub(crate) struct DebugLinesConfig {
-    depth_test: bool,
+    pub always_on_top: Arc<RwLock<bool>>, // Don’t know how to do this properly since this resource lives in a sub-app.
+}
+
+impl DebugLinesConfig {
+    fn always_on_top(on_top: bool) -> Self {
+        Self {
+            always_on_top: Arc::new(RwLock::new(on_top)),
+        }
+    }
 }
 
 /// Bevy plugin, for initializing stuff.
@@ -101,7 +89,7 @@ pub(crate) struct DebugLinesConfig {
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct DebugLinesPlugin {
-    depth_test: bool,
+    always_on_top: bool,
 }
 
 impl DebugLinesPlugin {
@@ -112,8 +100,8 @@ impl DebugLinesPlugin {
     ///
     /// * `val` - True if lines should intersect with other geometry, or false
     ///   if lines should always draw on top be drawn on top (the default).
-    pub fn with_depth_test(val: bool) -> Self {
-        Self { depth_test: val }
+    pub fn always_on_top(val: bool) -> Self {
+        Self { always_on_top: val }
     }
 }
 
@@ -121,24 +109,36 @@ impl Plugin for DebugLinesPlugin {
     fn build(&self, app: &mut App) {
         use bevy::render::{render_resource::SpecializedMeshPipelines, RenderApp, RenderStage};
         let mut shaders = app.world.get_resource_mut::<Assets<Shader>>().unwrap();
-        shaders.set_untracked(
-            DEBUG_LINES_SHADER_HANDLE,
-            Shader::from_wgsl(dim::SHADER_FILE),
-        );
-        app.init_resource::<DebugLines>();
-        app.add_startup_system(setup)
-            .add_system_to_stage(CoreStage::PostUpdate, update.label("draw_lines"));
-        app.sub_app_mut(RenderApp)
-            .add_render_command::<dim::Phase, dim::DrawDebugLines>()
-            .insert_resource(DebugLinesConfig {
-                depth_test: self.depth_test,
-            })
-            .init_resource::<dim::DebugLinePipeline>()
-            .init_resource::<SpecializedMeshPipelines<dim::DebugLinePipeline>>()
-            .add_system_to_stage(RenderStage::Extract, extract)
-            .add_system_to_stage(RenderStage::Queue, dim::queue);
+        shaders.set_untracked(DEBUG_LINES_SHADER_HANDLE, Shader::from_wgsl(SHADER_FILE));
 
-        info!("Loaded {} debug lines plugin.", dim::DIMMENSION);
+        let lines_config = DebugLinesConfig::always_on_top(self.always_on_top);
+        app.init_resource::<DebugLines>()
+            .add_startup_system(setup)
+            .add_system_to_stage(CoreStage::PostUpdate, update.label("draw_lines"))
+            .insert_resource(lines_config.clone());
+
+        #[cfg(feature = "debug-render-3d")]
+        app.sub_app_mut(RenderApp)
+            .add_render_command::<dim3::Phase, dim3::DrawDebugLines>()
+            .init_resource::<dim3::DebugLinePipeline>()
+            .init_resource::<SpecializedMeshPipelines<dim3::DebugLinePipeline>>()
+            .add_system_to_stage(RenderStage::Queue, dim3::queue);
+
+        #[cfg(feature = "debug-render-2d")]
+        app.sub_app_mut(RenderApp)
+            .add_render_command::<dim2::Phase, dim2::DrawDebugLines>()
+            .init_resource::<dim2::DebugLinePipeline>()
+            .init_resource::<SpecializedMeshPipelines<dim2::DebugLinePipeline>>()
+            .add_system_to_stage(RenderStage::Queue, dim2::queue);
+
+        app.sub_app_mut(RenderApp)
+            .insert_resource(lines_config)
+            .add_system_to_stage(RenderStage::Extract, extract);
+
+        #[cfg(feature = "debug-render-3d")]
+        info!("Loaded 3d debug lines plugin.");
+        #[cfg(feature = "debug-render-2d")]
+        info!("Loaded 2d debug lines plugin.");
     }
 }
 
@@ -164,15 +164,12 @@ fn setup(mut cmds: Commands, mut meshes: ResMut<Assets<Mesh>>) {
         );
         mesh.insert_attribute(
             Mesh::ATTRIBUTE_COLOR,
-            VertexAttributeValues::Uint32(Vec::with_capacity(MAX_POINTS_PER_MESH)),
+            VertexAttributeValues::Float32x4(Vec::with_capacity(MAX_POINTS_PER_MESH)),
         );
         // https://github.com/Toqozz/bevy_debug_lines/issues/16
         //mesh.set_indices(Some(Indices::U16(Vec::with_capacity(MAX_POINTS_PER_MESH))));
 
-        cmds.spawn_bundle((
-            dim::into_handle(meshes.add(mesh)),
-            NotShadowCaster,
-            NotShadowReceiver,
+        let mut entity_cmd = cmds.spawn_bundle((
             Transform::default(),
             GlobalTransform::default(),
             Visibility::default(),
@@ -180,19 +177,37 @@ fn setup(mut cmds: Commands, mut meshes: ResMut<Assets<Mesh>>) {
             NoFrustumCulling,
             DebugLinesMesh(i),
         ));
+
+        let mesh_handle = meshes.add(mesh);
+
+        #[cfg(feature = "debug-render-3d")]
+        entity_cmd.insert_bundle((
+            mesh_handle.clone(),
+            bevy::pbr::NotShadowCaster,
+            bevy::pbr::NotShadowReceiver,
+        ));
+
+        #[cfg(feature = "debug-render-2d")]
+        entity_cmd.insert(bevy::sprite::Mesh2dHandle(mesh_handle));
     }
 }
 
 fn update(
-    debug_line_meshes: Query<(&dim::MeshHandle, &DebugLinesMesh)>,
+    #[cfg(feature = "debug-render-3d")] debug_line_meshes_3d: Query<(
+        &Handle<Mesh>,
+        &DebugLinesMesh,
+    )>,
+    #[cfg(feature = "debug-render-2d")] debug_line_meshes_2d: Query<(
+        &bevy::sprite::Mesh2dHandle,
+        &DebugLinesMesh,
+    )>,
     time: Res<Time>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut lines: ResMut<DebugLines>,
 ) {
     // For each debug line mesh, fill its buffers with the relevant positions/colors chunks.
-    for (mesh_handle, debug_lines_idx) in debug_line_meshes.iter() {
-        let mesh = meshes.get_mut(dim::from_handle(mesh_handle)).unwrap();
-        use VertexAttributeValues::{Float32x3, Uint32};
+    let update = |mesh: &mut Mesh, debug_lines_idx: &DebugLinesMesh| {
+        use VertexAttributeValues::{Float32x3, Float32x4};
         if let Some(Float32x3(vbuffer)) = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
             vbuffer.clear();
             if let Some(new_content) = lines
@@ -204,7 +219,7 @@ fn update(
             }
         }
 
-        if let Some(Uint32(cbuffer)) = mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
+        if let Some(Float32x4(cbuffer)) = mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
             cbuffer.clear();
             if let Some(new_content) = lines
                 .colors
@@ -226,6 +241,18 @@ fn update(
             }
         }
         */
+    };
+
+    #[cfg(feature = "debug-render-3d")]
+    for (mesh_handle, debug_lines_idx) in &debug_line_meshes_3d {
+        let mesh = meshes.get_mut(mesh_handle).unwrap();
+        update(mesh, debug_lines_idx);
+    }
+
+    #[cfg(feature = "debug-render-2d")]
+    for (mesh2d_handle, debug_lines_idx) in &debug_line_meshes_2d {
+        let mesh = meshes.get_mut(&mesh2d_handle.0).unwrap();
+        update(mesh, debug_lines_idx);
     }
 
     // Processes stuff like getting rid of expired lines and stuff.
@@ -233,7 +260,7 @@ fn update(
 }
 
 /// Move the DebugLinesMesh marker Component to the render context.
-fn extract(mut commands: Commands, query: Query<Entity, With<DebugLinesMesh>>) {
+fn extract(mut commands: Commands, query: Extract<Query<Entity, With<DebugLinesMesh>>>) {
     for entity in query.iter() {
         commands.get_or_spawn(entity).insert(RenderDebugLinesMesh);
     }
@@ -269,11 +296,10 @@ pub(crate) struct RenderDebugLinesMesh;
 ///     );
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Resource, Default)]
 pub struct DebugLines {
     pub positions: Vec<[f32; 3]>,
-    //pub colors: Vec<[f32; 4]>,
-    pub colors: Vec<u32>,
+    pub colors: Vec<[f32; 4]>,
     pub durations: Vec<f32>,
 }
 
@@ -328,10 +354,8 @@ impl DebugLines {
 
         self.positions.push(start.into());
         self.positions.push(end.into());
-        //self.colors.push(start_color.into());
-        //self.colors.push(end_color.into());
-        self.colors.push(start_color.as_rgba_u32());
-        self.colors.push(end_color.as_rgba_u32());
+        self.colors.push(start_color.into());
+        self.colors.push(end_color.into());
         self.durations.push(duration);
     }
 
