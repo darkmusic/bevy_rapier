@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_rapier2d::prelude::*;
 
 #[derive(PartialEq, Eq, Clone, Copy, Component)]
@@ -11,15 +11,15 @@ enum CustomFilterTag {
 // same user_data value.
 // Note that using collision groups would be a more efficient way of doing
 // this, but we use custom filters instead for demonstration purpose.
-struct SameUserDataFilter;
-impl<'a> PhysicsHooksWithQuery<&'a CustomFilterTag> for SameUserDataFilter {
-    fn filter_contact_pair(
-        &self,
-        context: PairFilterContextView,
-        tags: &Query<&'a CustomFilterTag>,
-    ) -> Option<SolverFlags> {
-        if tags.get(context.collider1()).ok().copied()
-            == tags.get(context.collider2()).ok().copied()
+#[derive(SystemParam)]
+struct SameUserDataFilter<'w, 's> {
+    tags: Query<'w, 's, &'static CustomFilterTag>,
+}
+
+impl BevyPhysicsHooks for SameUserDataFilter<'_, '_> {
+    fn filter_contact_pair(&self, context: PairFilterContextView) -> Option<SolverFlags> {
+        if self.tags.get(context.collider1()).ok().copied()
+            == self.tags.get(context.collider2()).ok().copied()
         {
             Some(SolverFlags::COMPUTE_IMPULSES)
         } else {
@@ -35,19 +35,17 @@ fn main() {
             0xF9 as f32 / 255.0,
             0xFF as f32 / 255.0,
         )))
-        .insert_resource(Msaa::default())
-        .add_plugins(DefaultPlugins)
-        .add_plugin(RapierPhysicsPlugin::<&CustomFilterTag>::pixels_per_meter(
-            100.0,
+        .add_plugins((
+            DefaultPlugins,
+            RapierPhysicsPlugin::<SameUserDataFilter>::pixels_per_meter(100.0),
+            RapierDebugRenderPlugin::default(),
         ))
-        .add_plugin(RapierDebugRenderPlugin::default())
-        .add_startup_system(setup_graphics)
-        .add_startup_system(setup_physics)
+        .add_systems(Startup, (setup_graphics, setup_physics))
         .run();
 }
 
 fn setup_graphics(mut commands: Commands) {
-    commands.spawn_bundle(Camera2dBundle {
+    commands.spawn(Camera2dBundle {
         transform: Transform::from_xyz(0.0, 20.0, 0.0),
         ..default()
     });
@@ -57,21 +55,19 @@ pub fn setup_physics(mut commands: Commands) {
     /*
      * Ground
      */
-    commands.insert_resource(PhysicsHooksWithQueryResource(Box::new(
-        SameUserDataFilter {},
-    )));
-
     let ground_size = 100.0;
 
-    commands
-        .spawn_bundle(TransformBundle::from(Transform::from_xyz(0.0, -100.0, 0.0)))
-        .insert(Collider::cuboid(ground_size, 12.0))
-        .insert(CustomFilterTag::GroupA);
+    commands.spawn((
+        TransformBundle::from(Transform::from_xyz(0.0, -100.0, 0.0)),
+        Collider::cuboid(ground_size, 12.0),
+        CustomFilterTag::GroupA,
+    ));
 
-    commands
-        .spawn_bundle(TransformBundle::from(Transform::from_xyz(0.0, 0.0, 0.0)))
-        .insert(Collider::cuboid(ground_size, 12.0))
-        .insert(CustomFilterTag::GroupB);
+    commands.spawn((
+        TransformBundle::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+        Collider::cuboid(ground_size, 12.0),
+        CustomFilterTag::GroupB,
+    ));
 
     /*
      * Create the cubes
@@ -92,13 +88,14 @@ pub fn setup_physics(mut commands: Commands) {
             let y = j as f32 * shift + centery + 20.0;
             group_id += 1;
 
-            commands
-                .spawn_bundle(TransformBundle::from(Transform::from_xyz(x, y, 0.0)))
-                .insert(RigidBody::Dynamic)
-                .insert(Collider::cuboid(rad, rad))
-                .insert(ActiveHooks::FILTER_CONTACT_PAIRS)
-                .insert(tags[group_id % 2])
-                .insert(ColliderDebugColor(colors[group_id % 2]));
+            commands.spawn((
+                TransformBundle::from(Transform::from_xyz(x, y, 0.0)),
+                RigidBody::Dynamic,
+                Collider::cuboid(rad, rad),
+                ActiveHooks::FILTER_CONTACT_PAIRS,
+                tags[group_id % 2],
+                ColliderDebugColor(colors[group_id % 2]),
+            ));
         }
     }
 }

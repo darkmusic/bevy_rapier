@@ -5,34 +5,16 @@ use rapier::dynamics::{JointAxesMask, JointAxis, JointLimits, JointMotor, MotorM
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(transparent)]
-/// A revolute joint, locks all relative motion except for rotation along the joint’s principal axis.
-pub struct RevoluteJoint {
+/// A rope joint, limits the maximum distance between two bodies
+pub struct RopeJoint {
     data: GenericJoint,
 }
 
-#[cfg(feature = "dim2")]
-impl Default for RevoluteJoint {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RevoluteJoint {
-    /// Creates a new revolute joint allowing only relative rotations.
-    #[cfg(feature = "dim2")]
+impl RopeJoint {
+    /// Creates a new rope joint limiting the max distance between to bodies
     pub fn new() -> Self {
-        let data = GenericJointBuilder::new(JointAxesMask::LOCKED_REVOLUTE_AXES);
-        Self { data: data.build() }
-    }
-
-    /// Creates a new revolute joint allowing only relative rotations along the specified axis.
-    ///
-    /// This axis is expressed in the local-space of both rigid-bodies.
-    #[cfg(feature = "dim3")]
-    pub fn new(axis: Vect) -> Self {
-        let data = GenericJointBuilder::new(JointAxesMask::LOCKED_REVOLUTE_AXES)
-            .local_axis1(axis)
-            .local_axis2(axis)
+        let data = GenericJointBuilder::new(JointAxesMask::FREE_FIXED_AXES)
+            .coupled_axes(JointAxesMask::LIN_AXES)
             .build();
         Self { data }
     }
@@ -77,22 +59,54 @@ impl RevoluteJoint {
         self
     }
 
-    /// The motor affecting the joint’s rotational degree of freedom.
+    /// The principal axis of the joint, expressed in the local-space of the first rigid-body.
     #[must_use]
-    pub fn motor(&self) -> Option<&JointMotor> {
-        self.data.motor(JointAxis::AngX)
+    pub fn local_axis1(&self) -> Vect {
+        self.data.local_axis1()
+    }
+
+    /// Sets the principal axis of the joint, expressed in the local-space of the first rigid-body.
+    pub fn set_local_axis1(&mut self, axis1: Vect) -> &mut Self {
+        self.data.set_local_axis1(axis1);
+        self
+    }
+
+    /// The principal axis of the joint, expressed in the local-space of the second rigid-body.
+    #[must_use]
+    pub fn local_axis2(&self) -> Vect {
+        self.data.local_axis2()
+    }
+
+    /// Sets the principal axis of the joint, expressed in the local-space of the second rigid-body.
+    pub fn set_local_axis2(&mut self, axis2: Vect) -> &mut Self {
+        self.data.set_local_axis2(axis2);
+        self
+    }
+
+    /// The motor affecting the joint’s translational degree of freedom.
+    #[must_use]
+    pub fn motor(&self, axis: JointAxis) -> Option<&JointMotor> {
+        self.data.motor(axis)
     }
 
     /// Set the spring-like model used by the motor to reach the desired target velocity and position.
     pub fn set_motor_model(&mut self, model: MotorModel) -> &mut Self {
-        self.data.set_motor_model(JointAxis::AngX, model);
+        self.data.set_motor_model(JointAxis::X, model);
+        self.data.set_motor_model(JointAxis::Y, model);
+        #[cfg(feature = "dim3")]
+        self.data.set_motor_model(JointAxis::Z, model);
         self
     }
 
     /// Sets the target velocity this motor needs to reach.
     pub fn set_motor_velocity(&mut self, target_vel: Real, factor: Real) -> &mut Self {
         self.data
-            .set_motor_velocity(JointAxis::AngX, target_vel, factor);
+            .set_motor_velocity(JointAxis::X, target_vel, factor);
+        self.data
+            .set_motor_velocity(JointAxis::Y, target_vel, factor);
+        #[cfg(feature = "dim3")]
+        self.data
+            .set_motor_velocity(JointAxis::Z, target_vel, factor);
         self
     }
 
@@ -104,7 +118,12 @@ impl RevoluteJoint {
         damping: Real,
     ) -> &mut Self {
         self.data
-            .set_motor_position(JointAxis::AngX, target_pos, stiffness, damping);
+            .set_motor_position(JointAxis::X, target_pos, stiffness, damping);
+        self.data
+            .set_motor_position(JointAxis::Y, target_pos, stiffness, damping);
+        #[cfg(feature = "dim3")]
+        self.data
+            .set_motor_position(JointAxis::Z, target_pos, stiffness, damping);
         self
     }
 
@@ -117,62 +136,65 @@ impl RevoluteJoint {
         damping: Real,
     ) -> &mut Self {
         self.data
-            .set_motor(JointAxis::AngX, target_pos, target_vel, stiffness, damping);
+            .set_motor(JointAxis::X, target_pos, target_vel, stiffness, damping);
+        self.data
+            .set_motor(JointAxis::Y, target_pos, target_vel, stiffness, damping);
+        #[cfg(feature = "dim3")]
+        self.data
+            .set_motor(JointAxis::Y, target_pos, target_vel, stiffness, damping);
         self
     }
 
     /// Sets the maximum force the motor can deliver.
     pub fn set_motor_max_force(&mut self, max_force: Real) -> &mut Self {
-        self.data.set_motor_max_force(JointAxis::AngX, max_force);
+        self.data.set_motor_max_force(JointAxis::X, max_force);
+        self.data.set_motor_max_force(JointAxis::Y, max_force);
+        #[cfg(feature = "dim3")]
+        self.data.set_motor_max_force(JointAxis::Z, max_force);
         self
     }
 
-    /// The limit angle attached bodies can translate along the joint’s principal axis.
+    /// The limit distance attached bodies can translate along the joint’s principal axis.
     #[must_use]
-    pub fn limits(&self) -> Option<&JointLimits<Real>> {
-        self.data.limits(JointAxis::AngX)
+    pub fn limits(&self, axis: JointAxis) -> Option<&JointLimits<Real>> {
+        self.data.limits(axis)
     }
 
-    /// Sets the `[min,max]` limit angle attached bodies can translate along the joint’s principal axis.
+    /// Sets the `[min,max]` limit distances attached bodies can translate.
     pub fn set_limits(&mut self, limits: [Real; 2]) -> &mut Self {
-        self.data.set_limits(JointAxis::AngX, limits);
+        self.data.set_limits(JointAxis::X, limits);
+        self.data.set_limits(JointAxis::Y, limits);
+        #[cfg(feature = "dim3")]
+        self.data.set_limits(JointAxis::Z, limits);
         self
     }
 }
 
-impl From<RevoluteJoint> for GenericJoint {
-    fn from(joint: RevoluteJoint) -> GenericJoint {
-        joint.data
-    }
-}
-
-/// Create revolute joints using the builder pattern.
-///
-/// A revolute joint locks all relative motion except for rotations along the joint’s principal axis.
-#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct RevoluteJointBuilder(RevoluteJoint);
-
-#[cfg(feature = "dim2")]
-impl Default for RevoluteJointBuilder {
+impl Default for RopeJoint {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl RevoluteJointBuilder {
-    /// Creates a new revolute joint builder.
-    #[cfg(feature = "dim2")]
-    pub fn new() -> Self {
-        Self(RevoluteJoint::new())
+impl From<RopeJoint> for GenericJoint {
+    fn from(joint: RopeJoint) -> GenericJoint {
+        joint.data
     }
+}
 
-    /// Creates a new revolute joint builder, allowing only relative rotations along the specified axis.
+/// Create rope joints using the builder pattern.
+///
+/// A rope joint, limits the maximum distance between two bodies.
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct RopeJointBuilder(RopeJoint);
+
+impl RopeJointBuilder {
+    /// Creates a new builder for rope joints.
     ///
     /// This axis is expressed in the local-space of both rigid-bodies.
-    #[cfg(feature = "dim3")]
-    pub fn new(axis: Vect) -> Self {
-        Self(RevoluteJoint::new(axis))
+    pub fn new() -> Self {
+        Self(RopeJoint::new())
     }
 
     /// Sets the joint’s anchor, expressed in the local-space of the first rigid-body.
@@ -186,6 +208,20 @@ impl RevoluteJointBuilder {
     #[must_use]
     pub fn local_anchor2(mut self, anchor2: Vect) -> Self {
         self.0.set_local_anchor2(anchor2);
+        self
+    }
+
+    /// Sets the principal axis of the joint, expressed in the local-space of the first rigid-body.
+    #[must_use]
+    pub fn local_axis1(mut self, axis1: Vect) -> Self {
+        self.0.set_local_axis1(axis1);
+        self
+    }
+
+    /// Sets the principal axis of the joint, expressed in the local-space of the second rigid-body.
+    #[must_use]
+    pub fn local_axis2(mut self, axis2: Vect) -> Self {
+        self.0.set_local_axis2(axis2);
         self
     }
 
@@ -212,7 +248,7 @@ impl RevoluteJointBuilder {
 
     /// Configure both the target angle and target velocity of the motor.
     #[must_use]
-    pub fn motor(
+    pub fn set_motor(
         mut self,
         target_pos: Real,
         target_vel: Real,
@@ -230,22 +266,28 @@ impl RevoluteJointBuilder {
         self
     }
 
-    /// Sets the `[min,max]` limit angles attached bodies can rotate along the joint’s principal axis.
+    /// Sets the `[min,max]` limit distances attached bodies can translate.
     #[must_use]
     pub fn limits(mut self, limits: [Real; 2]) -> Self {
         self.0.set_limits(limits);
         self
     }
 
-    /// Builds the revolute joint.
+    /// Builds the rope joint.
     #[must_use]
-    pub fn build(self) -> RevoluteJoint {
+    pub fn build(self) -> RopeJoint {
         self.0
     }
 }
 
-impl From<RevoluteJointBuilder> for GenericJoint {
-    fn from(joint: RevoluteJointBuilder) -> GenericJoint {
+impl Default for RopeJointBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<RopeJointBuilder> for GenericJoint {
+    fn from(joint: RopeJointBuilder) -> GenericJoint {
         joint.0.into()
     }
 }

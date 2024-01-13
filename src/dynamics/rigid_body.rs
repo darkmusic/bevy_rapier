@@ -1,18 +1,21 @@
 use crate::math::Vect;
-use bevy::{prelude::*, reflect::FromReflect};
+use bevy::prelude::*;
 use rapier::prelude::{
     Isometry, LockedAxes as RapierLockedAxes, RigidBodyActivation, RigidBodyHandle, RigidBodyType,
 };
+use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 /// The Rapier handle of a rigid-body that was inserted to the physics scene.
 #[derive(Copy, Clone, Debug, Component)]
 pub struct RapierRigidBodyHandle(pub RigidBodyHandle);
 
 /// A rigid-body.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Component, Reflect, Default)]
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[reflect(Component, PartialEq)]
 pub enum RigidBody {
     /// A `RigidBody::Dynamic` body can be affected by all external forces.
+    #[default]
     Dynamic,
     /// A `RigidBody::Fixed` body cannot be affected by external forces.
     Fixed,
@@ -32,12 +35,6 @@ pub enum RigidBody {
     KinematicVelocityBased,
 }
 
-impl Default for RigidBody {
-    fn default() -> Self {
-        RigidBody::Dynamic
-    }
-}
-
 impl From<RigidBody> for RigidBodyType {
     fn from(rigid_body: RigidBody) -> RigidBodyType {
         match rigid_body {
@@ -49,12 +46,24 @@ impl From<RigidBody> for RigidBodyType {
     }
 }
 
+impl From<RigidBodyType> for RigidBody {
+    fn from(rigid_body: RigidBodyType) -> RigidBody {
+        match rigid_body {
+            RigidBodyType::Dynamic => RigidBody::Dynamic,
+            RigidBodyType::Fixed => RigidBody::Fixed,
+            RigidBodyType::KinematicPositionBased => RigidBody::KinematicPositionBased,
+            RigidBodyType::KinematicVelocityBased => RigidBody::KinematicVelocityBased,
+        }
+    }
+}
+
 /// The velocity of a rigid-body.
 ///
 /// Use this component to control and/or read the velocity of a dynamic or kinematic rigid-body.
 /// If this component isn’t present, a dynamic rigid-body will still be able to move (you will just
 /// not be able to read/modify its velocity).
-#[derive(Copy, Clone, Debug, Default, PartialEq, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Component, Reflect)]
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[reflect(Component, PartialEq)]
 pub struct Velocity {
     /// The linear velocity of the rigid-body.
@@ -69,41 +78,76 @@ pub struct Velocity {
 
 impl Velocity {
     /// Initialize a velocity set to zero.
-    pub fn zero() -> Self {
-        Self::default()
+    pub const fn zero() -> Self {
+        Self {
+            linvel: Vect::ZERO,
+            #[cfg(feature = "dim2")]
+            angvel: 0.0,
+            #[cfg(feature = "dim3")]
+            angvel: Vect::ZERO,
+        }
     }
 
     /// Initialize a velocity with the given linear velocity, and an angular velocity of zero.
-    pub fn linear(linvel: Vect) -> Self {
+    pub const fn linear(linvel: Vect) -> Self {
         Self {
             linvel,
-            ..Self::default()
+            #[cfg(feature = "dim2")]
+            angvel: 0.0,
+            #[cfg(feature = "dim3")]
+            angvel: Vect::ZERO,
         }
     }
 
     /// Initialize a velocity with the given angular velocity, and a linear velocity of zero.
     #[cfg(feature = "dim2")]
-    pub fn angular(angvel: f32) -> Self {
+    pub const fn angular(angvel: f32) -> Self {
         Self {
+            linvel: Vect::ZERO,
             angvel,
-            ..Self::default()
         }
     }
 
     /// Initialize a velocity with the given angular velocity, and a linear velocity of zero.
     #[cfg(feature = "dim3")]
-    pub fn angular(angvel: Vect) -> Self {
+    pub const fn angular(angvel: Vect) -> Self {
         Self {
+            linvel: Vect::ZERO,
             angvel,
-            ..Self::default()
         }
+    }
+
+    /// Get linear velocity of specific world-space point of a rigid-body.
+    ///
+    /// # Parameters
+    /// - `point`: the point (world-space) to compute the velocity for.
+    /// - `center_of_mass`: the center-of-mass (world-space) of the rigid-body the velocity belongs to.
+    pub fn linear_velocity_at_point(&self, point: Vect, center_of_mass: Vect) -> Vect {
+        #[cfg(feature = "dim2")]
+        return self.linvel + self.angvel * (point - center_of_mass).perp();
+
+        #[cfg(feature = "dim3")]
+        return self.linvel + self.angvel.cross(point - center_of_mass);
     }
 }
 
 /// Mass-properties of a rigid-body, added to the contributions of its attached colliders.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Debug, PartialEq, Component, Reflect)]
 #[reflect(Component, PartialEq)]
-pub struct AdditionalMassProperties(pub MassProperties);
+pub enum AdditionalMassProperties {
+    /// This mass will be added to the rigid-body. The rigid-body’s total
+    /// angular inertia tensor (obtained from its attached colliders) will
+    /// be scaled accordingly.
+    Mass(f32),
+    /// These mass properties will be added to the rigid-body.
+    MassProperties(MassProperties),
+}
+
+impl Default for AdditionalMassProperties {
+    fn default() -> Self {
+        Self::MassProperties(MassProperties::default())
+    }
+}
 
 /// Center-of-mass, mass, and angular inertia.
 ///
@@ -111,8 +155,37 @@ pub struct AdditionalMassProperties(pub MassProperties);
 /// a rigid-body (including the colliders contribution). Modifying this component won’t
 /// affect the mass-properties of the rigid-body (the attached colliders’ `ColliderMassProperties`
 /// and the `AdditionalMassProperties` should be modified instead).
-#[derive(Copy, Clone, Debug, Default, PartialEq, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Component, Reflect)]
 #[reflect(Component, PartialEq)]
+pub struct ReadMassProperties(MassProperties);
+
+impl ReadMassProperties {
+    /// Get the [`MassProperties`] of this rigid-body.
+    pub fn get(&self) -> &MassProperties {
+        &self.0
+    }
+
+    pub(crate) fn set(&mut self, mass_props: MassProperties) {
+        self.0 = mass_props;
+    }
+}
+
+/// Entity that likely had their mass properties changed this frame.
+#[derive(Deref, Copy, Clone, Debug, PartialEq, Event)]
+pub struct MassModifiedEvent(pub Entity);
+
+impl From<Entity> for MassModifiedEvent {
+    fn from(entity: Entity) -> Self {
+        Self(entity)
+    }
+}
+
+/// Center-of-mass, mass, and angular inertia.
+///
+/// This cannot be used as a component. Use the components `ReadMassProperties` to read a rigid-body’s
+/// mass-properties or `AdditionalMassProperties` to set its additional mass-properties.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(PartialEq)]
 pub struct MassProperties {
     /// The center of mass of a rigid-body expressed in its local-space.
     pub local_center_of_mass: Vect,
@@ -167,7 +240,7 @@ impl MassProperties {
 }
 
 bitflags::bitflags! {
-    #[derive(Default, Component, Reflect, FromReflect)]
+    #[derive(Default, Component, Reflect)]
     #[reflect(Component, PartialEq)]
     /// Flags affecting the behavior of the constraints solver for a given contact manifold.
     pub struct LockedAxes: u8 {
@@ -199,7 +272,7 @@ impl From<LockedAxes> for RapierLockedAxes {
 /// Constant external forces applied continuously to a rigid-body.
 ///
 /// This force is applied at each timestep.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Component, Reflect)]
 #[reflect(Component, PartialEq)]
 pub struct ExternalForce {
     /// The linear force applied to the rigid-body.
@@ -212,11 +285,66 @@ pub struct ExternalForce {
     pub torque: Vect,
 }
 
+impl ExternalForce {
+    /// A force applied at a specific world-space point of a rigid-body.
+    ///
+    /// # Parameters
+    /// - `force`: the force to apply.
+    /// - `point`: the point (world-space) where the impulse must be applied.
+    /// - `center_of_mass`: the center-of-mass (world-space) of the rigid-body the impulse is being
+    ///   applied to.
+    pub fn at_point(force: Vect, point: Vect, center_of_mass: Vect) -> Self {
+        Self {
+            force,
+            #[cfg(feature = "dim2")]
+            torque: (point - center_of_mass).perp_dot(force),
+            #[cfg(feature = "dim3")]
+            torque: (point - center_of_mass).cross(force),
+        }
+    }
+}
+
+impl Add for ExternalForce {
+    type Output = Self;
+
+    #[inline]
+    fn add(mut self, rhs: Self) -> Self::Output {
+        self += rhs;
+        self
+    }
+}
+
+impl Sub for ExternalForce {
+    type Output = Self;
+
+    #[inline]
+    fn sub(mut self, rhs: Self) -> Self::Output {
+        self -= rhs;
+        self
+    }
+}
+
+impl AddAssign for ExternalForce {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.force += rhs.force;
+        self.torque += rhs.torque;
+    }
+}
+
+impl SubAssign for ExternalForce {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.force -= rhs.force;
+        self.torque -= rhs.torque;
+    }
+}
+
 /// Instantaneous external impulse applied continuously to a rigid-body.
 ///
 /// The impulse is only applied once, and whenever it it modified (based
 /// on Bevy’s change detection).
-#[derive(Copy, Clone, Debug, Default, PartialEq, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Component, Reflect)]
 #[reflect(Component, PartialEq)]
 pub struct ExternalImpulse {
     /// The linear impulse applied to the rigid-body.
@@ -229,9 +357,69 @@ pub struct ExternalImpulse {
     pub torque_impulse: Vect,
 }
 
+impl ExternalImpulse {
+    /// An impulse applied at a specific world-space point of a rigid-body.
+    ///
+    /// # Parameters
+    /// - `impulse`: the impulse to apply.
+    /// - `point`: the point (world-space) where the impulse must be applied.
+    /// - `center_of_mass`: the center-of-mass (world-space) of the rigid-body the impulse is being
+    ///   applied to.
+    pub fn at_point(impulse: Vect, point: Vect, center_of_mass: Vect) -> Self {
+        Self {
+            impulse,
+            #[cfg(feature = "dim2")]
+            torque_impulse: (point - center_of_mass).perp_dot(impulse),
+            #[cfg(feature = "dim3")]
+            torque_impulse: (point - center_of_mass).cross(impulse),
+        }
+    }
+
+    /// Reset the external impulses to zero.
+    pub fn reset(&mut self) {
+        *self = Default::default();
+    }
+}
+
+impl Add for ExternalImpulse {
+    type Output = Self;
+
+    #[inline]
+    fn add(mut self, rhs: Self) -> Self::Output {
+        self += rhs;
+        self
+    }
+}
+
+impl Sub for ExternalImpulse {
+    type Output = Self;
+
+    #[inline]
+    fn sub(mut self, rhs: Self) -> Self::Output {
+        self -= rhs;
+        self
+    }
+}
+
+impl AddAssign for ExternalImpulse {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.impulse += rhs.impulse;
+        self.torque_impulse += rhs.torque_impulse;
+    }
+}
+
+impl SubAssign for ExternalImpulse {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.impulse -= rhs.impulse;
+        self.torque_impulse -= rhs.torque_impulse;
+    }
+}
+
 /// Gravity is multiplied by this scaling factor before it's
 /// applied to this rigid-body.
-#[derive(Copy, Clone, Debug, PartialEq, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Debug, PartialEq, Component, Reflect)]
 #[reflect(Component, PartialEq)]
 pub struct GravityScale(pub f32);
 
@@ -242,7 +430,7 @@ impl Default for GravityScale {
 }
 
 /// Information used for Continuous-Collision-Detection.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Component, Reflect)]
 #[reflect(Component, PartialEq)]
 pub struct Ccd {
     /// Is CCD enabled for this rigid-body?
@@ -265,7 +453,7 @@ impl Ccd {
 }
 
 /// The dominance groups of a rigid-body.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Component, Reflect)]
 #[reflect(Component, PartialEq)]
 pub struct Dominance {
     // FIXME: rename this to `group` (no `s`).
@@ -284,12 +472,12 @@ impl Dominance {
 ///
 /// This controls whether a body is sleeping or not.
 /// If the threshold is negative, the body never sleeps.
-#[derive(Copy, Clone, Debug, PartialEq, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Debug, PartialEq, Component, Reflect)]
 #[reflect(Component, PartialEq)]
 pub struct Sleeping {
-    /// The threshold linear velocity bellow which the body can fall asleep.
+    /// The linear velocity below which the body can fall asleep.
     pub linear_threshold: f32,
-    /// The angular linear velocity bellow which the body can fall asleep.
+    /// The angular velocity below which the body can fall asleep.
     pub angular_threshold: f32,
     /// Is this body sleeping?
     pub sleeping: bool,
@@ -317,7 +505,7 @@ impl Default for Sleeping {
 }
 
 /// Damping factors to gradually slow down a rigid-body.
-#[derive(Copy, Clone, Debug, PartialEq, Component, Reflect, FromReflect)]
+#[derive(Copy, Clone, Debug, PartialEq, Component, Reflect)]
 #[reflect(Component, PartialEq)]
 pub struct Damping {
     // TODO: rename these to "linear" and "angular"?
@@ -357,3 +545,8 @@ impl TransformInterpolation {
         }
     }
 }
+
+/// Indicates whether or not the rigid-body is disabled explicitly by the user.
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Component, Reflect)]
+#[reflect(Component, PartialEq)]
+pub struct RigidBodyDisabled;

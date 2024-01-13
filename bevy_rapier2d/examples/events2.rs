@@ -8,23 +8,30 @@ fn main() {
             0xF9 as f32 / 255.0,
             0xFF as f32 / 255.0,
         )))
-        .insert_resource(Msaa::default())
-        .add_plugins(DefaultPlugins)
-        .add_plugin(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
-        .add_plugin(RapierDebugRenderPlugin::default())
-        .add_startup_system(setup_graphics)
-        .add_startup_system(setup_physics)
-        .add_system_to_stage(CoreStage::PostUpdate, display_events)
+        .add_plugins((
+            DefaultPlugins,
+            RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0),
+            RapierDebugRenderPlugin::default(),
+        ))
+        .add_systems(Startup, (setup_graphics, setup_physics))
+        .add_systems(PostUpdate, display_events)
         .run();
 }
 
 fn setup_graphics(mut commands: Commands) {
-    commands.spawn_bundle(Camera2dBundle::default());
+    commands.spawn(Camera2dBundle::default());
 }
 
-fn display_events(mut collision_events: EventReader<CollisionEvent>) {
+fn display_events(
+    mut collision_events: EventReader<CollisionEvent>,
+    mut contact_force_events: EventReader<ContactForceEvent>,
+) {
     for collision_event in collision_events.iter() {
-        println!("Received collision event: {:?}", collision_event);
+        println!("Received collision event: {collision_event:?}");
+    }
+
+    for contact_force_event in contact_force_events.iter() {
+        println!("Received contact force event: {contact_force_event:?}");
     }
 }
 
@@ -32,18 +39,22 @@ pub fn setup_physics(mut commands: Commands) {
     /*
      * Ground
      */
-    commands
-        .spawn_bundle(TransformBundle::from(Transform::from_xyz(0.0, -24.0, 0.0)))
-        .insert(Collider::cuboid(80.0, 20.0));
+    commands.spawn((
+        TransformBundle::from(Transform::from_xyz(0.0, -24.0, 0.0)),
+        Collider::cuboid(80.0, 20.0),
+    ));
 
-    commands
-        .spawn_bundle(TransformBundle::from(Transform::from_xyz(0.0, 100.0, 0.0)))
-        .insert(Collider::cuboid(80.0, 30.0))
-        .insert(Sensor(true));
+    commands.spawn((
+        TransformBundle::from(Transform::from_xyz(0.0, 100.0, 0.0)),
+        Collider::cuboid(80.0, 30.0),
+        Sensor,
+    ));
 
-    commands
-        .spawn_bundle(TransformBundle::from(Transform::from_xyz(0.0, 260.0, 0.0)))
-        .insert(RigidBody::Dynamic)
-        .insert(Collider::cuboid(10.0, 10.0))
-        .insert(ActiveEvents::COLLISION_EVENTS);
+    commands.spawn((
+        TransformBundle::from(Transform::from_xyz(0.0, 260.0, 0.0)),
+        RigidBody::Dynamic,
+        Collider::cuboid(10.0, 10.0),
+        ActiveEvents::COLLISION_EVENTS,
+        ContactForceEventThreshold(10.0),
+    ));
 }

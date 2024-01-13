@@ -1,43 +1,5 @@
-use bevy::prelude::*;
+use bevy::{core::FrameCount, prelude::*, transform::TransformSystem};
 use bevy_rapier3d::prelude::*;
-
-struct SpecialStagingPlugin {
-    schedule: Schedule,
-}
-
-impl SpecialStagingPlugin {
-    pub fn new(schedule: Schedule) -> Self {
-        Self { schedule }
-    }
-}
-
-impl SpecialStagingPlugin {
-    fn build(self, app: &mut App) {
-        app.add_stage_after(
-            CoreStage::Update,
-            "special_staging_plugin_stage",
-            SpecialStage::new(self.schedule),
-        );
-    }
-}
-
-struct SpecialStage {
-    schedule: Schedule,
-}
-
-impl SpecialStage {
-    pub fn new(schedule: Schedule) -> Self {
-        Self { schedule }
-    }
-}
-
-impl Stage for SpecialStage {
-    fn run(&mut self, world: &mut World) {
-        self.schedule.run_once(world);
-    }
-}
-
-struct FrameCount(u32);
 
 fn main() {
     let mut app = App::new();
@@ -47,87 +9,61 @@ fn main() {
         0xF9 as f32 / 255.0,
         0xFF as f32 / 255.0,
     )))
-    .insert_resource(Msaa::default())
-    .insert_resource(FrameCount(0))
-    .add_plugins(DefaultPlugins)
-    .add_plugin(RapierDebugRenderPlugin::default())
-    .add_startup_system(setup_graphics)
-    .add_startup_system(setup_physics);
+    .add_plugins((
+        DefaultPlugins,
+        RapierPhysicsPlugin::<NoUserData>::default().with_default_system_setup(false),
+        RapierDebugRenderPlugin::default(),
+    ))
+    .add_systems(Startup, (setup_graphics, setup_physics));
 
-    // Do the stage setup however we want, maybe in a special plugin that has
-    // its very own schedule
-    SpecialStagingPlugin::new(
-        Schedule::default()
-            .with_stage(
-                PhysicsStages::SyncBackend,
-                SystemStage::parallel().with_system_set(
-                    RapierPhysicsPlugin::<NoUserData>::get_systems(PhysicsStages::SyncBackend),
-                ),
-            )
-            .with_stage_after(
-                PhysicsStages::SyncBackend,
-                PhysicsStages::StepSimulation,
-                SystemStage::parallel()
-                    .with_system(despawn_one_box) // We can add a special despawn to determine cleanup later
-                    .with_system_set(RapierPhysicsPlugin::<NoUserData>::get_systems(
-                        PhysicsStages::StepSimulation,
-                    )),
-            )
-            .with_stage_after(
-                PhysicsStages::StepSimulation,
-                PhysicsStages::Writeback,
-                SystemStage::parallel().with_system_set(
-                    RapierPhysicsPlugin::<NoUserData>::get_systems(PhysicsStages::Writeback),
-                ),
-            ),
-    )
-    .build(&mut app);
-
-    // Be sure to setup all four stages
-    app.add_stage_before(
-        CoreStage::Last,
-        PhysicsStages::DetectDespawn,
-        SystemStage::parallel().with_system_set(RapierPhysicsPlugin::<NoUserData>::get_systems(
-            PhysicsStages::DetectDespawn,
-        )),
+    app.configure_sets(
+        PostUpdate,
+        (
+            PhysicsSet::SyncBackend,
+            PhysicsSet::StepSimulation,
+            PhysicsSet::Writeback,
+        )
+            .chain()
+            .before(TransformSystem::TransformPropagate),
     );
 
-    app.add_plugin(RapierPhysicsPlugin::<NoUserData>::default().with_default_system_setup(false));
+    app.add_systems(
+        PostUpdate,
+        (
+            RapierPhysicsPlugin::<NoUserData>::get_systems(PhysicsSet::SyncBackend)
+                .in_set(PhysicsSet::SyncBackend),
+            (
+                RapierPhysicsPlugin::<NoUserData>::get_systems(PhysicsSet::StepSimulation),
+                despawn_one_box,
+            )
+                .in_set(PhysicsSet::StepSimulation),
+            RapierPhysicsPlugin::<NoUserData>::get_systems(PhysicsSet::Writeback)
+                .in_set(PhysicsSet::Writeback),
+        ),
+    );
 
     app.run();
 }
 
 fn despawn_one_box(
     mut commands: Commands,
-    mut frame_count: ResMut<FrameCount>,
+    frame_count: ResMut<FrameCount>,
     query: Query<Entity, (With<Collider>, With<RigidBody>)>,
 ) {
-    frame_count.0 += 1;
-
-    // Delete a box every 10 frames
-    if frame_count.0 % 10 == 0 && !query.is_empty() {
-        let count = query.iter().count();
-        if let Some(entity) = query
-            .iter()
-            .skip(frame_count.0 as usize % count) // Get a "random" box to make sim interesting
-            .take(1)
-            .next()
-        {
+    // Delete a box every 5 frames
+    if frame_count.0 % 5 == 0 && !query.is_empty() {
+        let len = query.iter().len();
+        // Get a "random" box to make sim interesting
+        if let Some(entity) = query.iter().nth(frame_count.0 as usize % len) {
             commands.entity(entity).despawn();
         }
     }
 }
 
 fn setup_graphics(mut commands: Commands) {
-    commands.spawn_bundle(Camera3dBundle {
-        transform: Transform::from_matrix(
-            Mat4::look_at_rh(
-                Vec3::new(-30.0, 30.0, 100.0),
-                Vec3::new(0.0, 10.0, 0.0),
-                Vec3::new(0.0, 1.0, 0.0),
-            )
-            .inverse(),
-        ),
+    commands.spawn(Camera3dBundle {
+        transform: Transform::from_xyz(-30.0, 30.0, 100.0)
+            .looking_at(Vec3::new(0.0, 10.0, 0.0), Vec3::Y),
         ..Default::default()
     });
 }
@@ -139,13 +75,10 @@ pub fn setup_physics(mut commands: Commands) {
     let ground_size = 200.1;
     let ground_height = 0.1;
 
-    commands
-        .spawn_bundle(TransformBundle::from(Transform::from_xyz(
-            0.0,
-            -ground_height,
-            0.0,
-        )))
-        .insert(Collider::cuboid(ground_size, ground_height, ground_size));
+    commands.spawn((
+        TransformBundle::from(Transform::from_xyz(0.0, -ground_height, 0.0)),
+        Collider::cuboid(ground_size, ground_height, ground_size),
+    ));
 
     /*
      * Create the cubes
@@ -174,11 +107,12 @@ pub fn setup_physics(mut commands: Commands) {
                 let z = k as f32 * shift - centerz + offset;
                 color += 1;
 
-                commands
-                    .spawn_bundle(TransformBundle::from(Transform::from_xyz(x, y, z)))
-                    .insert(RigidBody::Dynamic)
-                    .insert(Collider::cuboid(rad, rad, rad))
-                    .insert(ColliderDebugColor(colors[color % 3]));
+                commands.spawn((
+                    TransformBundle::from(Transform::from_xyz(x, y, z)),
+                    RigidBody::Dynamic,
+                    Collider::cuboid(rad, rad, rad),
+                    ColliderDebugColor(colors[color % 3]),
+                ));
             }
         }
 

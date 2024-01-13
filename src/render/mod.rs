@@ -1,12 +1,10 @@
 use crate::plugin::RapierContext;
 use bevy::prelude::*;
-use lines::DebugLines;
+use bevy::transform::TransformSystem;
 use rapier::math::{Point, Real};
 use rapier::pipeline::{DebugRenderBackend, DebugRenderObject, DebugRenderPipeline};
 pub use rapier::pipeline::{DebugRenderMode, DebugRenderStyle};
 use std::fmt::Debug;
-
-mod lines;
 
 /// The color of a collider when using the debug-renderer.
 ///
@@ -20,10 +18,8 @@ pub struct ColliderDebugColor(pub Color);
 /// its physics simulation. This is typically useful to check proper
 /// alignment between colliders and your own visual assets.
 pub struct RapierDebugRenderPlugin {
-    /// If set to `false`, depth-testing will be disabled when rendering,
-    /// meaning that the debug-render lines will always appear on top
-    /// of (won’t be occluded by) your own visual assets.
-    pub depth_test: bool,
+    /// Is the debug-rendering enabled?
+    pub enabled: bool,
     /// Control some aspects of the render coloring.
     pub style: DebugRenderStyle,
     /// Flags to select what part of physics scene is rendered (by default
@@ -31,34 +27,46 @@ pub struct RapierDebugRenderPlugin {
     pub mode: DebugRenderMode,
 }
 
+#[allow(clippy::derivable_impls)] // The 3D impl can be derived, but not the 2D impl.
 impl Default for RapierDebugRenderPlugin {
     #[cfg(feature = "dim2")]
     fn default() -> Self {
         Self {
-            depth_test: cfg!(feature = "dim3"),
+            enabled: true,
             style: DebugRenderStyle {
                 rigid_body_axes_length: 20.0,
                 ..Default::default()
             },
-            mode: DebugRenderMode::all(),
+            mode: DebugRenderMode::default(),
         }
     }
     #[cfg(feature = "dim3")]
     fn default() -> Self {
         Self {
-            depth_test: cfg!(feature = "dim3"),
+            enabled: true,
             style: DebugRenderStyle::default(),
-            mode: DebugRenderMode::all(),
+            mode: DebugRenderMode::default(),
         }
     }
 }
 
+impl RapierDebugRenderPlugin {
+    /// Initialize the render plugin such that it is initially disabled.
+    pub fn disabled(mut self) -> Self {
+        self.enabled = false;
+        self
+    }
+}
+
 /// Context to control some aspect of the debug-renderer after initialization.
+#[derive(Resource, Reflect)]
+#[reflect(Resource)]
 pub struct DebugRenderContext {
     /// Is the debug-rendering currently enabled?
     pub enabled: bool,
     /// Pipeline responsible for rendering. Access `pipeline.mode` and `pipeline.style`
     /// to modify the set of rendered elements, and modify the default coloring rules.
+    #[reflect(ignore)]
     pub pipeline: DebugRenderPipeline,
 }
 
@@ -73,23 +81,27 @@ impl Default for DebugRenderContext {
 
 impl Plugin for RapierDebugRenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugin(lines::DebugLinesPlugin::with_depth_test(self.depth_test))
-            .insert_resource(DebugRenderContext {
-                enabled: true,
-                pipeline: DebugRenderPipeline::new(self.style, self.mode),
-            })
-            .add_system_to_stage(CoreStage::Update, debug_render_scene);
+        app.register_type::<DebugRenderContext>();
+
+        app.insert_resource(DebugRenderContext {
+            enabled: self.enabled,
+            pipeline: DebugRenderPipeline::new(self.style, self.mode),
+        })
+        .add_systems(
+            PostUpdate,
+            debug_render_scene.after(TransformSystem::TransformPropagate),
+        );
     }
 }
 
-struct BevyLinesRenderBackend<'world, 'state, 'a, 'b, 'c> {
+struct BevyLinesRenderBackend<'world, 'state, 'a, 'b> {
     physics_scale: f32,
     custom_colors: Query<'world, 'state, &'a ColliderDebugColor>,
     context: &'b RapierContext,
-    lines: &'c mut DebugLines,
+    gizmos: Gizmos<'state>,
 }
 
-impl<'world, 'state, 'a, 'b, 'c> BevyLinesRenderBackend<'world, 'state, 'a, 'b, 'c> {
+impl<'world, 'state, 'a, 'b> BevyLinesRenderBackend<'world, 'state, 'a, 'b> {
     fn object_color(&self, object: DebugRenderObject, default: [f32; 4]) -> [f32; 4] {
         let color = match object {
             DebugRenderObject::Collider(h, ..) => self.context.colliders.get(h).and_then(|co| {
@@ -105,9 +117,7 @@ impl<'world, 'state, 'a, 'b, 'c> BevyLinesRenderBackend<'world, 'state, 'a, 'b, 
     }
 }
 
-impl<'world, 'state, 'a, 'b, 'c> DebugRenderBackend
-    for BevyLinesRenderBackend<'world, 'state, 'a, 'b, 'c>
-{
+impl<'world, 'state, 'a, 'b> DebugRenderBackend for BevyLinesRenderBackend<'world, 'state, 'a, 'b> {
     #[cfg(feature = "dim2")]
     fn draw_line(
         &mut self,
@@ -118,10 +128,9 @@ impl<'world, 'state, 'a, 'b, 'c> DebugRenderBackend
     ) {
         let scale = self.physics_scale;
         let color = self.object_color(object, color);
-        self.lines.line_colored(
+        self.gizmos.line(
             [a.x * scale, a.y * scale, 0.0].into(),
             [b.x * scale, b.y * scale, 0.0].into(),
-            0.0,
             Color::hsla(color[0], color[1], color[2], color[3]),
         )
     }
@@ -136,10 +145,9 @@ impl<'world, 'state, 'a, 'b, 'c> DebugRenderBackend
     ) {
         let scale = self.physics_scale;
         let color = self.object_color(object, color);
-        self.lines.line_colored(
+        self.gizmos.line(
             [a.x * scale, a.y * scale, a.z * scale].into(),
             [b.x * scale, b.y * scale, b.z * scale].into(),
-            0.0,
             Color::hsla(color[0], color[1], color[2], color[3]),
         )
     }
@@ -148,7 +156,7 @@ impl<'world, 'state, 'a, 'b, 'c> DebugRenderBackend
 fn debug_render_scene(
     rapier_context: Res<RapierContext>,
     mut render_context: ResMut<DebugRenderContext>,
-    mut lines: ResMut<DebugLines>,
+    gizmos: Gizmos,
     custom_colors: Query<&ColliderDebugColor>,
 ) {
     if !render_context.enabled {
@@ -158,8 +166,8 @@ fn debug_render_scene(
     let mut backend = BevyLinesRenderBackend {
         physics_scale: rapier_context.physics_scale,
         custom_colors,
-        context: &*rapier_context,
-        lines: &mut *lines,
+        context: &rapier_context,
+        gizmos,
     };
 
     let unscaled_style = render_context.pipeline.style;

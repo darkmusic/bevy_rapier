@@ -8,25 +8,19 @@ fn main() {
             0xF9 as f32 / 255.0,
             0xFF as f32 / 255.0,
         )))
-        .insert_resource(Msaa::default())
-        .add_plugins(DefaultPlugins)
-        .add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
-        .add_plugin(RapierDebugRenderPlugin::default())
-        .add_startup_system(setup_graphics)
-        .add_startup_system(setup_physics)
+        .add_plugins((
+            DefaultPlugins,
+            RapierPhysicsPlugin::<NoUserData>::default(),
+            RapierDebugRenderPlugin::default(),
+        ))
+        .add_systems(Startup, (setup_graphics, setup_physics))
         .run();
 }
 
 fn setup_graphics(mut commands: Commands) {
-    commands.spawn_bundle(Camera3dBundle {
-        transform: Transform::from_matrix(
-            Mat4::look_at_rh(
-                Vec3::new(15.0, 5.0, 42.0),
-                Vec3::new(13.0, 1.0, 1.0),
-                Vec3::new(0.0, 1.0, 0.0),
-            )
-            .inverse(),
-        ),
+    commands.spawn(Camera3dBundle {
+        transform: Transform::from_xyz(15.0, 5.0, 42.0)
+            .looking_at(Vec3::new(13.0, 1.0, 1.0), Vec3::Y),
         ..Default::default()
     });
 }
@@ -36,11 +30,11 @@ fn create_prismatic_joints(commands: &mut Commands, origin: Vect, num: usize) {
     let shift = 1.0;
 
     let mut curr_parent = commands
-        .spawn_bundle(TransformBundle::from(Transform::from_xyz(
-            origin.x, origin.y, origin.z,
-        )))
-        .insert(RigidBody::Fixed)
-        .insert(Collider::cuboid(rad, rad, rad))
+        .spawn((
+            TransformBundle::from(Transform::from_xyz(origin.x, origin.y, origin.z)),
+            RigidBody::Fixed,
+            Collider::cuboid(rad, rad, rad),
+        ))
         .id();
 
     for i in 0..num {
@@ -58,14 +52,43 @@ fn create_prismatic_joints(commands: &mut Commands, origin: Vect, num: usize) {
         let joint = ImpulseJoint::new(curr_parent, prism);
 
         curr_parent = commands
-            .spawn_bundle(TransformBundle::from(Transform::from_xyz(
-                origin.x,
-                origin.y,
-                origin.z + dz,
-            )))
-            .insert(RigidBody::Dynamic)
-            .insert(Collider::cuboid(rad, rad, rad))
-            .insert(joint)
+            .spawn((
+                TransformBundle::from(Transform::from_xyz(origin.x, origin.y, origin.z + dz)),
+                RigidBody::Dynamic,
+                Collider::cuboid(rad, rad, rad),
+                joint,
+            ))
+            .id();
+    }
+}
+
+fn create_rope_joints(commands: &mut Commands, origin: Vect, num: usize) {
+    let rad = 0.4;
+    let shift = 1.0;
+
+    let mut curr_parent = commands
+        .spawn((
+            TransformBundle::from(Transform::from_xyz(origin.x, origin.y, origin.z)),
+            RigidBody::Fixed,
+            Collider::cuboid(rad, rad, rad),
+        ))
+        .id();
+
+    for i in 0..num {
+        let dz = (i + 1) as f32 * shift;
+
+        let rope = RopeJointBuilder::new()
+            .local_anchor2(Vec3::new(0.0, 0.0, -shift))
+            .limits([0.0, 2.0]);
+        let joint = ImpulseJoint::new(curr_parent, rope);
+
+        curr_parent = commands
+            .spawn((
+                TransformBundle::from(Transform::from_xyz(origin.x, origin.y, origin.z + dz)),
+                RigidBody::Dynamic,
+                Collider::cuboid(rad, rad, rad),
+                joint,
+            ))
             .id();
     }
 }
@@ -75,11 +98,11 @@ fn create_revolute_joints(commands: &mut Commands, origin: Vec3, num: usize) {
     let shift = 2.0;
 
     let mut curr_parent = commands
-        .spawn_bundle(TransformBundle::from(Transform::from_xyz(
-            origin.x, origin.y, 0.0,
-        )))
-        .insert(RigidBody::Fixed)
-        .insert(Collider::cuboid(rad, rad, rad))
+        .spawn((
+            TransformBundle::from(Transform::from_xyz(origin.x, origin.y, 0.0)),
+            RigidBody::Fixed,
+            Collider::cuboid(rad, rad, rad),
+        ))
         .id();
 
     for i in 0..num {
@@ -95,11 +118,11 @@ fn create_revolute_joints(commands: &mut Commands, origin: Vec3, num: usize) {
         let mut handles = [curr_parent; 4];
         for k in 0..4 {
             handles[k] = commands
-                .spawn_bundle(TransformBundle::from(Transform::from_translation(
-                    positions[k],
-                )))
-                .insert(RigidBody::Dynamic)
-                .insert(Collider::cuboid(rad, rad, rad))
+                .spawn((
+                    TransformBundle::from(Transform::from_translation(positions[k])),
+                    RigidBody::Dynamic,
+                    Collider::cuboid(rad, rad, rad),
+                ))
                 .id();
         }
 
@@ -152,13 +175,15 @@ fn create_fixed_joints(commands: &mut Commands, origin: Vec3, num: usize) {
             };
 
             let child_entity = commands
-                .spawn_bundle(TransformBundle::from(Transform::from_xyz(
-                    origin.x + fk * shift,
-                    origin.y,
-                    origin.z + fi * shift,
-                )))
-                .insert(rigid_body)
-                .insert(Collider::ball(rad))
+                .spawn((
+                    TransformBundle::from(Transform::from_xyz(
+                        origin.x + fk * shift,
+                        origin.y,
+                        origin.z + fi * shift,
+                    )),
+                    rigid_body,
+                    Collider::ball(rad),
+                ))
                 .id();
 
             // Vertical joint.
@@ -169,9 +194,7 @@ fn create_fixed_joints(commands: &mut Commands, origin: Vec3, num: usize) {
                     // NOTE: we want to attach multiple impulse joints to this entity, so
                     //       we need to add the components to children of the entity. Otherwise
                     //       the second joint component would just overwrite the first one.
-                    children
-                        .spawn()
-                        .insert(ImpulseJoint::new(parent_entity, joint));
+                    children.spawn(ImpulseJoint::new(parent_entity, joint));
                 });
             }
 
@@ -184,9 +207,7 @@ fn create_fixed_joints(commands: &mut Commands, origin: Vec3, num: usize) {
                     // NOTE: we want to attach multiple impulse joints to this entity, so
                     //       we need to add the components to children of the entity. Otherwise
                     //       the second joint component would just overwrite the first one.
-                    children
-                        .spawn()
-                        .insert(ImpulseJoint::new(parent_entity, joint));
+                    children.spawn(ImpulseJoint::new(parent_entity, joint));
                 });
             }
 
@@ -213,13 +234,11 @@ fn create_ball_joints(commands: &mut Commands, num: usize) {
             };
 
             let child_entity = commands
-                .spawn_bundle(TransformBundle::from(Transform::from_xyz(
-                    fk * shift,
-                    0.0,
-                    fi * shift,
-                )))
-                .insert(rigid_body)
-                .insert(Collider::ball(rad))
+                .spawn((
+                    TransformBundle::from(Transform::from_xyz(fk * shift, 0.0, fi * shift)),
+                    rigid_body,
+                    Collider::ball(rad),
+                ))
                 .id();
 
             // Vertical joint.
@@ -230,9 +249,7 @@ fn create_ball_joints(commands: &mut Commands, num: usize) {
                     // NOTE: we want to attach multiple impulse joints to this entity, so
                     //       we need to add the components to children of the entity. Otherwise
                     //       the second joint component would just overwrite the first one.
-                    children
-                        .spawn()
-                        .insert(ImpulseJoint::new(parent_entity, joint));
+                    children.spawn(ImpulseJoint::new(parent_entity, joint));
                 });
             }
 
@@ -245,9 +262,7 @@ fn create_ball_joints(commands: &mut Commands, num: usize) {
                     // NOTE: we want to attach multiple impulse joints to this entity, so
                     //       we need to add the components to children of the entity. Otherwise
                     //       the second joint component would just overwrite the first one.
-                    children
-                        .spawn()
-                        .insert(ImpulseJoint::new(parent_entity, joint));
+                    children.spawn(ImpulseJoint::new(parent_entity, joint));
                 });
             }
 
@@ -260,5 +275,6 @@ pub fn setup_physics(mut commands: Commands) {
     create_prismatic_joints(&mut commands, Vec3::new(20.0, 10.0, 0.0), 5);
     create_revolute_joints(&mut commands, Vec3::new(20.0, 0.0, 0.0), 3);
     create_fixed_joints(&mut commands, Vec3::new(0.0, 10.0, 0.0), 5);
+    create_rope_joints(&mut commands, Vec3::new(30.0, 10.0, 0.0), 5);
     create_ball_joints(&mut commands, 15);
 }

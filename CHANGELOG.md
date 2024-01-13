@@ -1,5 +1,163 @@
 # Changelog
 
+## Unreleased
+### Added
+- `ColliderView::as_typed_shape` and `::to_shared_shape` to convert a `ColliderView` to a parry’s
+    `TypedShape` or `SharedShape`. The `From` trait has also been implemented accordingly.
+- Implement `Copy` for `ColliderView` and all the other non-mut shape views.
+- Add `RapierContext::rigid_body_colliders` to retrieve all collider entities attached to this rigid-body.
+- Add `RapierPhysicsPlugin::in_fixed_schedule`/`::in_schedude` to add rapier’s systems to a fixed/custom
+  schedule.
+
+### Fix
+- Fix debug-renderer lagging one frame behind.
+- Fix Collider `Transform` rotation change not being taken into account by the physics engine.
+- Fix automatic update of `ReadMassProperties`.
+
+## 0.22.0 (10 July 2023)
+### Modified
+- Update to Bevy 0.11.
+- Disabled rigid-bodies are no longer synchronized with the rapier backend.
+- Switch to bevy’s gizmo system for the debug-renderer. This removes the vendored debug lines plugin.
+
+### Added
+- Add a joint for simulating ropes: the `RopeJoint`.
+- Add `Velocity::linear_velocity_at_point` to calculate the linear velocity at the given world-space point.
+- Add the `ComputedColliderShape::ConvexHull` variant to automatcially calculate the convex-hull of an imported mesh.
+- Implement `Reflect` for the debug-renderer.
+
+### Fix
+- Fix broken interpolation for rigid-bodies with the `TransformInterpolation` component.
+- Fix compilation when `bevy_rapier` is being used with headless bevy.
+- Improved performance of the writeback system by not iterting on non-rigid-body entities.
+- Fix typo by renaming `CuboidViewMut::sed_half_extents` to `set_half_extents`.
+- Properly scale parented collider’s offset based on changes on its `ColliderScale`.
+
+## 0.21.0  (07 March 2023)
+### Modified
+- Update to Bevy 0.10.
+- The `PhysicsHooksWithQuery` trait has been renamed to by the `BevyPhysicsHooks`.
+- Bevy resources and queries accessed by the physics hook are now specified by the implementor of `BevyPhysicsHooks`
+  which must derive Bevy’s `SystemParam` trait. This implies that the physics hook’s `filter_contact_pair` (and
+  all its other methods) no longer take the Bevy `Query` as argument. Queries and resources are accessed through
+  `self`.
+- Rename `PhysicsStages` to `PhysicsSet`.
+
+## 0.20.0 (15 Jan. 2023)
+### Added
+- Add the `RigidBodyDisabled` and `ColliderDisabled` component that can be inserted to disable a rigid-body
+  or collider without removing it from the scene.
+
+### Fix
+- Fix spawn position of colliders without rigid bodies.
+- Fix overriding enabled flag in debug render.
+
+### Modified
+- Make debug-rendering enabled by default when inserting the `RapierDebugRenderPlugin` plugin with its default configuration.
+- The `debug-render` feature has been replaced by two features: `debug-render-2d` and `debug-render-3d`. For example, 
+  using `debug-render-2d` with `bevy_rapier3d`, the debug-render will work with 2D cameras (useful, e.g., for top-down games
+  with 3D graphics).
+- In order to facilitate the use of `bevy_rapier` in headless mode, the `AsyncCollider` and `AsyncSceneCollider`
+  components were moved behind the `async-collider` feature (enabled by default). Disabling that feature will
+  make `bevy_rapier` work even with the `MinimalPlugins` inserted instead of the `DefaultPlugins`.
+- Corrected an API inconsistency where `bevy_rapier` components would sometimes require an `InteracitonGroup` type defined in
+  `rapier`. It has been replaced by the `CollisionGroup` type (defined in `bevy_rapier`).
+- `Velocity::zero,linear,angular` are now const-fn.
+
+## 0.19.0 (18 Nov. 2022)
+### Modified
+- Update to Bevy 0.9
+
+## 0.18.0 (30 Oct. 2022)
+### Added
+- Add the accessor `RapierContext::physics_scale()` to read the physics scale
+  that was set when initializing the plugin.
+- Add `RapierConfiguration::force_update_from_transform_changes` to force the transform
+  updates even if it is equal to the transform that was previously set. Useful for
+  rollback in networked applications described in [#261](https://github.com/dimforge/bevy_rapier/pull/261).
+- Add `Collider::trimesh_with_flags` to create a triangle mesh collider with custom pre-processing
+  flags.
+
+### Fix
+- Reset the `ExternalImpulse` component after each step automatically.
+- Fix `transform_to_iso` to preserve identical rotations instead of 
+  converting to an intermediate axis-angle representation.
+- Fix **internal edges** of 3D triangle meshes or 3D heightfields generating invalid contacts
+  preventing balls from moving straight. Be sure to set the triangle mesh flag
+  `TriMeshFlags::MERGE_DUPLICATE_VERTICES` when creating the collider if your mesh have duplicated
+  vertices.
+
+### Modified
+- Rename `AABB` to `Aabb` to comply with Rust’s style guide.
+
+## 0.17.0 (02 Oct. 2022)
+### Added
+- Add a **kinematic character controller** implementation. This feature is accessible in two different ways:
+  1. The first approach is to insert the `KinematicCharacterController` component to an entity. If the
+  `KinematicCharacterController::custom_shape` field is set, then this shape is used for the character control.
+  If this field is `None` then the `Collider` attached to the same entity as the character controller is used.
+  The character controller will be automatically updated when the `KinematicCharacterController::movement` is set.
+  The result position is written to the `Transform` of the character controller’s entity.
+  2. The second, lower level, approach, is to call `RapierContext::move_shape` to compute the possible movement
+  of a shape, taking obstacle and sliding into account.
+- Add implementations of `Add`, `AddAssign`, `Sub`, `SubAssign` to `ExternalForce` and `ExternalImpulse`.
+- Add `ExternalForce::at_point` and `ExternalImpulse::at_point` to apply a force/impulse at a specific point
+  of a rigid-body.
+
+### Fix
+- Fix shapes quickly switching between scaled and non-scaled versions due to rounding errors in the scaling extraction
+  from bevy’s global affine transform.
+
+## 0.16.2 (23 August 2022)
+### Added
+- Implement `Debug` for `Collider` and `ColliderView`.
+- Add the missing `ActiveEvent::CONTACT_FORCE_EVENTS` to enable contact force events on a collider.
+
+## 0.16.1 (19 August 2022)
+### Fixed
+- Fix crash of the 2D debug-render on certain platforms (including Metal/MacOS).
+- Fix bug where collision events and contact force events were not cleared automatically.
+- Implement `Reflect` for `AsyncCollider`.
+
+## 0.16.0 (31 July 2022)
+### Modified
+- Switch to Bevy 0.8.
+
+## 0.15.0 (10 July 2022)
+### Fixed
+- Fix unpredictable broad-phase panic when using small colliders in the simulation.
+- Fix collision events being incorrectly generated for any shape that produces multiple
+  contact manifolds (like triangle meshes).
+- Fix transform hierarchies not being properly taken into account for colliders with a 
+  parent rigid-body.
+- Fix force and impulse application when the `ExternalImpulse` or `ExternalForce` components were added
+  at the same time as the rigid-body creation.
+- Fix sleeping threshold application when these thresholds are set at the same time as the rigid-body
+  creation.
+
+### Added
+- Add the `ColliderMassProperties::Mass` variant to let the user specify a collider’s mass directly (instead of its density).
+  As a result the collider’s angular inertia tensor will be automatically be computed based on this mass and its shape.
+- Add the `ContactForceEvent` event. It can be read by a bevy system with the `EventReader<ContactForceEvent>`. This
+  event is useful to read contact forces. A `ContactForceEvent` is generated whenever the sum of the magnitudes of the
+  forces applied by contacts between two colliders exceeds the value specified by the `ContactForceEventThreshold`
+  component.
+- Add the `QueryFilter` struct that is now used by all the scene queries instead of the `CollisionGroups` and
+ `Fn(Entity) -> bool` closure. This `QueryFilter` provides easy access to most common filtering strategies
+ (e.g. dynamic bodies only, excluding one particular entity, etc.) for scene queries.
+- Added some missing serialization of joints.
+- Implement `Default` for `Collider`. It defaults to a `Ball` with radius 0.5.
+- Added a `contacts_enabled` flag to all the joints. If this flag is set to `false` for a joint, no contact will be 
+  computed between two colliders attached to rigid-bodies liked by that joint.
+
+### Modified
+- The `MassProperties` struct is no longer a `Component`. A common mistake was to assume that `MassProperties` could
+  be used to initialize the mass/angular inertia tensor of a rigid-body. It is not the case. Instead, the user should
+  use the `AdditionalMassProperties` component. The `ReadMassProperties` component has been added to read the mass
+  properties of a rigid-body.
+- The `Sensor` component is now a marker component: if it exists the related collider is a sensor, otherwise it is
+  a solid collider.
+
 ## 0.14.1 (01 June 2022)
 ### Fixed
 - Add the missing `init_async_scene_colliders` to the list of the plugin systems.

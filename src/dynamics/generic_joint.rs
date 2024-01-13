@@ -1,14 +1,16 @@
-use crate::dynamics::{FixedJoint, PrismaticJoint, RevoluteJoint};
+use crate::dynamics::{FixedJoint, PrismaticJoint, RevoluteJoint, RopeJoint};
 use crate::math::{Real, Rot, Vect};
 use rapier::dynamics::{
     GenericJoint as RapierGenericJoint, JointAxesMask, JointAxis, JointLimits, JointMotor,
     MotorModel,
 };
+use rapier::math::DIM;
 
 #[cfg(feature = "dim3")]
 use crate::dynamics::SphericalJoint;
 
 /// The description of any joint.
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
 #[repr(transparent)]
 pub struct GenericJoint {
@@ -22,12 +24,14 @@ impl GenericJoint {
         self.raw.local_frame1.translation.vector /= physics_scale;
         self.raw.local_frame2.translation.vector /= physics_scale;
 
-        for limit in &mut self.raw.limits {
+        // NOTE: we don’t apply the physics scale to angular limits.
+        for limit in &mut self.raw.limits[0..DIM] {
             limit.min /= physics_scale;
             limit.max /= physics_scale;
         }
 
-        for motor in &mut self.raw.motors {
+        // NOTE: we don’t apply the physics scale to angular motors.
+        for motor in &mut self.raw.motors[0..DIM] {
             motor.target_vel /= physics_scale;
             motor.target_pos /= physics_scale;
         }
@@ -153,6 +157,17 @@ impl GenericJoint {
         self
     }
 
+    /// Are contacts between the attached rigid-bodies enabled?
+    pub fn contacts_enabled(&self) -> bool {
+        self.raw.contacts_enabled
+    }
+
+    /// Sets whether contacts between the attached rigid-bodies are enabled.
+    pub fn set_contacts_enabled(&mut self, enabled: bool) -> &mut Self {
+        self.raw.set_contacts_enabled(enabled);
+        self
+    }
+
     /// The joint limits along the specified axis.
     #[must_use]
     pub fn limits(&self, axis: JointAxis) -> Option<&JointLimits<Real>> {
@@ -162,6 +177,12 @@ impl GenericJoint {
     /// Sets the joint limits along the specified axis.
     pub fn set_limits(&mut self, axis: JointAxis, limits: [Real; 2]) -> &mut Self {
         self.raw.set_limits(axis, limits);
+        self
+    }
+
+    /// Sets the coupled degrees of freedom for this joint’s limits and motor.
+    pub fn set_coupled_axes(&mut self, axes: JointAxesMask) -> &mut Self {
+        self.raw.coupled_axes = axes;
         self
     }
 
@@ -275,6 +296,12 @@ impl GenericJoint {
         PrismaticJoint,
         JointAxesMask::LOCKED_PRISMATIC_AXES
     );
+    joint_conversion_methods!(
+        as_rope,
+        as_rope_mut,
+        RopeJoint,
+        JointAxesMask::FREE_FIXED_AXES
+    );
 
     #[cfg(feature = "dim3")]
     joint_conversion_methods!(
@@ -286,6 +313,7 @@ impl GenericJoint {
 }
 
 /// Create generic joints using the builder pattern.
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[derive(Copy, Clone, Debug)]
 pub struct GenericJointBuilder(GenericJoint);
 
@@ -352,12 +380,12 @@ impl GenericJointBuilder {
         self
     }
 
-    // /// Sets the coupled degrees of freedom for this joint’s limits and motor.
-    // #[must_use]
-    // pub fn coupled_axes(mut self, axes: JointAxesMask) -> Self {
-    //     self.0.coupled_axes = axes;
-    //     self
-    // }
+    /// Sets the coupled degrees of freedom for this joint’s limits and motor.
+    #[must_use]
+    pub fn coupled_axes(mut self, axes: JointAxesMask) -> Self {
+        self.0.set_coupled_axes(axes);
+        self
+    }
 
     /// Set the spring-like model used by the motor to reach the desired target velocity and position.
     #[must_use]
